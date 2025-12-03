@@ -99,12 +99,14 @@ If you prefer to run manually:
 
 
 ```bash
-# Primeiro, inicie o Redis
+# Primeiro, inicie o Redis (dados salvos em ./redis_data)
 docker run -d \
   --name=redis \
   --restart=unless-stopped \
   -p 6379:6379 \
-  redis:7-alpine
+  -v $(pwd)/redis_data:/data \
+  redis:7-alpine \
+  redis-server --appendonly yes
 
 # Opcional: Inicie o FlareSolverr (para resolver Cloudflare)
 docker run -d \
