@@ -5,7 +5,7 @@ import logging
 import sys
 
 
-# Converte nível numérico (como no Go) para nível do logging do Python
+# Converte nível numérico para nível do logging do Python
 def _get_log_level_from_numeric(level: int) -> int:
     level_map = {
         0: logging.DEBUG,

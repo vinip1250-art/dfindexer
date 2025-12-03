@@ -5,7 +5,6 @@ from typing import List, Dict
 from datetime import datetime
 
 
-# Processador de torrents - ordenação, limpeza, etc.
 class TorrentProcessor:
     @staticmethod
     def remove_internal_fields(torrents: List[Dict]) -> None:

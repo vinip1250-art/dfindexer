@@ -10,11 +10,9 @@ from scraper import available_scraper_types
 
 logger = logging.getLogger(__name__)
 
-# Instância do serviço de indexação
 _indexer_service = IndexerService()
 
 
-# Handler para endpoint raiz - informações da API
 def index_handler():
     scraper_info = _indexer_service.get_scraper_info()
     endpoints = {
@@ -49,7 +47,6 @@ def index_handler():
     })
 
 
-# Handler principal do indexador
 def indexer_handler(site_name: str = None):
     display_label = 'UNKNOWN'
     normalized_type = 'UNKNOWN'
@@ -63,7 +60,6 @@ def indexer_handler(site_name: str = None):
         types_info = available_scraper_types()
         available_types = list(types_info.keys())
         
-        # Determina qual site usar
         if site_name:
             is_valid, normalized_type = _indexer_service.validate_scraper_type(site_name)
             if not is_valid:
@@ -77,7 +73,6 @@ def indexer_handler(site_name: str = None):
                 }), 404
             display_label = types_info[normalized_type].get('display_name', site_name)
         else:
-            # Usa o primeiro scraper disponível como padrão
             normalized_type = available_types[0] if available_types else ''
             if not normalized_type:
                 raise ValueError('Nenhum scraper disponível para processar a requisição.')
@@ -86,30 +81,24 @@ def indexer_handler(site_name: str = None):
         log_prefix = f"[{display_label}]"
         logger.info(f"{log_prefix} Query: '{query}' | Page: {page} | Filter: {filter_results} | FlareSolverr: {use_flaresolverr}")
         
-        # Detecta se é query vazia
         is_prowlarr_test = not query
         
-        # Usa serviço para buscar torrents
         if query:
             torrents = _indexer_service.search(normalized_type, query, use_flaresolverr, filter_results)
         else:
             torrents = _indexer_service.get_page(normalized_type, page, use_flaresolverr, is_prowlarr_test)
         
-        # Log de estatísticas do filtro (sempre mostra quando disponível)
         filter_stats = _indexer_service.get_last_filter_stats()
         if filter_stats:
             logger.info(f"{log_prefix} [Filtro Aplicado] Total: {filter_stats['total']} | Filtrados: {filter_stats['filtered']} | Aprovados: {filter_stats['approved']}")
         else:
-            # Se não há estatísticas disponíveis, mostra log simples com contagem
             logger.info(f"{log_prefix} [Filtro Aplicado] Total: {len(torrents)} | Filtrados: 0 | Aprovados: {len(torrents)}")
         
-        # Prepara resposta JSON
         response_data = {
             'results': torrents,
             'count': len(torrents)
         }
         
-        # Adiciona indicador de teste quando for query de teste
         if is_prowlarr_test:
             response_data['teste'] = True
         

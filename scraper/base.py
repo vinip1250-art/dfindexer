@@ -53,9 +53,7 @@ class BaseScraper(ABC):
                 logger.warning(f"Falha ao inicializar FlareSolverr: {e}. Continuando sem FlareSolverr.")
                 self.use_flaresolverr = False
     
-    # Obtém documento HTML do cache ou faz requisição
     def get_document(self, url: str, referer: str = '') -> Optional[BeautifulSoup]:
-        # Tenta obter do cache de longa duração (se Redis disponível e não for teste)
         if self.redis and not self._is_test:
             try:
                 cache_key = html_long_key(url)
@@ -65,7 +63,6 @@ class BaseScraper(ABC):
             except:
                 pass
         
-        # Tenta obter do cache de curta duração (se Redis disponível e não for teste)
         if self.redis and not self._is_test:
             try:
                 short_cache_key = html_short_key(url)
@@ -75,11 +72,7 @@ class BaseScraper(ABC):
             except:
                 pass
         
-        # Faz requisição HTTP
         html_content = None
-        
-        # Tenta usar FlareSolverr se habilitado
-        # Mas pula se URL contém dois pontos codificados (%3A) - problema conhecido do FlareSolverr
         use_flaresolverr_for_this_url = (
             self.use_flaresolverr and 
             self.flaresolverr_client and 
@@ -102,7 +95,6 @@ class BaseScraper(ABC):
                         skip_redis=self._is_test
                     )
                     if html_content:
-                        # Sucesso com FlareSolverr, salva no cache (se não for teste)
                         if self.redis and not self._is_test:
                             try:
                                 short_cache_key = html_short_key(url)
@@ -119,12 +111,10 @@ class BaseScraper(ABC):
                                     html_content
                                 )
                             except:
-                                pass  # Ignora erros de cache
+                                pass
                         
                         return BeautifulSoup(html_content, 'html.parser')
                     else:
-                        # Se solve retornou None (erro 500 ou outro)
-                        # Verifica se já tentou com essa URL recentemente (cache de falhas)
                         failure_key = f"flaresolverr:failure:{url}"
                         should_retry = True
                         
@@ -134,25 +124,21 @@ class BaseScraper(ABC):
                                     logger.debug(f"URL {url} já falhou recentemente com FlareSolverr. Pulando retry.")
                                     should_retry = False
                                 else:
-                                    # Marca como falha ANTES de tentar retry (5 minutos = 300s)
                                     self.redis.setex(failure_key, 300, "1")
                             except Exception:
-                                pass  # Se Redis falhar, continua com retry
+                                pass
                         
-                        # Verifica se URL contém dois pontos codificados (%3A) - problema conhecido do FlareSolverr
                         if "%3A" in url or "%3a" in url.lower():
                             logger.debug(f"URL contém dois pontos codificados (%3A). FlareSolverr pode ter problemas. Pulando retry.")
                             should_retry = False
                         
                         if should_retry:
                             logger.debug(f"FlareSolverr retornou None para {url}. Tentando criar nova sessão.")
-                            # Força criação de nova sessão (invalidação já foi feita no solve)
                             new_session_id = self.flaresolverr_client.get_or_create_session(
                                 self.base_url,
                                 skip_redis=self._is_test
                             )
                             if new_session_id and new_session_id != session_id:
-                                # Tenta novamente com nova sessão
                                 html_content = self.flaresolverr_client.solve(
                                     url,
                                     new_session_id,
@@ -161,7 +147,6 @@ class BaseScraper(ABC):
                                     skip_redis=self._is_test
                                 )
                                 if html_content:
-                                    # Sucesso com nova sessão, remove marca de falha e salva no cache (se não for teste)
                                     if self.redis and not self._is_test:
                                         try:
                                             self.redis.delete(failure_key)
@@ -179,11 +164,10 @@ class BaseScraper(ABC):
                                                 html_content
                                             )
                                         except:
-                                            pass  # Ignora erros de cache
+                                            pass
                                     
                                     return BeautifulSoup(html_content, 'html.parser')
                                 else:
-                                    # Se ainda falhou, confirma a marca de falha (se não for teste)
                                     if self.redis and not self._is_test:
                                         try:
                                             self.redis.setex(failure_key, 300, "1")  # 5 minutos
@@ -192,7 +176,6 @@ class BaseScraper(ABC):
             except Exception as e:
                 logger.debug(f"Erro ao usar FlareSolverr para {url}: {e}. Tentando requisição direta.")
         
-        # Fallback: requisição HTTP direta (ou se FlareSolverr não habilitado)
         headers = {'Referer': referer if referer else self.base_url}
         
         try:
@@ -200,7 +183,6 @@ class BaseScraper(ABC):
             response.raise_for_status()
             html_content = response.content
             
-            # Salva no cache (se Redis disponível e não for teste)
             if self.redis and not self._is_test:
                 try:
                     short_cache_key = html_short_key(url)
@@ -217,7 +199,7 @@ class BaseScraper(ABC):
                         html_content
                     )
                 except:
-                    pass  # Ignora erros de cache
+                    pass
             
             return BeautifulSoup(html_content, 'html.parser')
         
@@ -248,18 +230,13 @@ class BaseScraper(ABC):
             Tuple (is_using_default_limit, skip_metadata, skip_trackers)
         """
         is_using_default_limit = max_items is None
-        
-        # Metadata e trackers sempre coletados (sempre ON)
         skip_metadata = False
         skip_trackers = False
-        
-        # Configura flags do scraper
         self._skip_metadata = skip_metadata
         self._is_test = is_using_default_limit
         
         return is_using_default_limit, skip_metadata, skip_trackers
     
-    # Extrai links da página inicial (deve ser implementado por cada scraper)
     def _extract_links_from_page(self, doc: BeautifulSoup) -> List[str]:
         """
         Extrai links de torrents da página inicial.
@@ -273,17 +250,13 @@ class BaseScraper(ABC):
         """
         return []
     
-    # Método helper padrão para get_page - pode ser usado pela maioria dos scrapers
     def _default_get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
         """
         Implementação padrão de get_page que pode ser reutilizada pelos scrapers.
-        Apenas extrai links usando _extract_links_from_page e processa.
         """
-        # Prepara flags de teste/metadata/trackers (centralizado no BaseScraper)
         is_using_default_limit, skip_metadata, skip_trackers = self._prepare_page_flags(max_items)
         
         try:
-            # Constrói URL da página usando função utilitária
             from utils.concurrency.scraper_helpers import (
                 build_page_url, get_effective_max_items, limit_list,
                 process_links_parallel, process_links_sequential
@@ -294,54 +267,39 @@ class BaseScraper(ABC):
             if not doc:
                 return []
             
-            # Extrai links usando método específico do scraper
             links = self._extract_links_from_page(doc)
-            
-            # Obtém limite efetivo usando função utilitária
             effective_max = get_effective_max_items(max_items)
-            
-            # Limita links se houver limite (EMPTY_QUERY_MAX_LINKS limita quantos links processar)
             links = limit_list(links, effective_max)
             
-            # Quando há limite configurado, processa sequencialmente para manter ordem original
-            # Caso contrário, processa em paralelo para melhor performance
             if effective_max > 0:
                 all_torrents = process_links_sequential(
                     links,
                     self._get_torrents_from_page,
-                    None  # Sem limite no processamento - já limitamos os links acima
+                    None
                 )
             else:
                 all_torrents = process_links_parallel(
                     links,
                     self._get_torrents_from_page,
-                    None  # Sem limite no processamento - já limitamos os links acima
+                    None
                 )
             
-            # Enriquece torrents (usa flags preparadas pelo BaseScraper)
             enriched = self.enrich_torrents(
                 all_torrents,
                 skip_metadata=skip_metadata,
                 skip_trackers=skip_trackers
             )
-            # Retorna todos os magnets encontrados (sem limite nos resultados finais)
             return enriched
         finally:
-            # Restaura flags após processamento
             self._skip_metadata = False
-            self._is_test = False
+            self._skip_metadata = False
     
-    # Método helper padrão para search - pode ser usado pela maioria dos scrapers
     def _default_search(self, query: str, filter_func: Optional[Callable[[Dict], bool]] = None) -> List[Dict]:
         """
         Implementação padrão de search que pode ser reutilizada pelos scrapers.
-        Usa _search_variations para buscar links e processa sequencialmente.
         """
-        # Normaliza query para FlareSolverr (substitui dois pontos por espaço)
         from utils.concurrency.scraper_helpers import normalize_query_for_flaresolverr
         query = normalize_query_for_flaresolverr(query, self.use_flaresolverr)
-        
-        # Busca variações da query (deve ser implementado por cada scraper)
         links = self._search_variations(query)
         
         all_torrents = []
@@ -377,14 +335,13 @@ class BaseScraper(ABC):
         pass
 
     def enrich_torrents(self, torrents: List[Dict], skip_metadata: bool = False, skip_trackers: bool = False, filter_func: Optional[Callable[[Dict], bool]] = None) -> List[Dict]:
-        """Preenche dados de seeds/leechers via trackers (quando possível) - delega para TorrentEnricher do core"""
+        """Preenche dados de seeds/leechers via trackers"""
         from core.enrichers.torrent_enricher import TorrentEnricher
         from scraper import available_scraper_types
         
         if not hasattr(self, '_enricher'):
             self._enricher = TorrentEnricher()
         
-        # Passa o display_name do scraper para incluir nos logs
         scraper_name = None
         if hasattr(self, 'SCRAPER_TYPE'):
             scraper_type = getattr(self, 'SCRAPER_TYPE', '')
@@ -393,25 +350,15 @@ class BaseScraper(ABC):
             if normalized_type in types_info:
                 scraper_name = types_info[normalized_type].get('display_name', scraper_type)
             else:
-                # Fallback: usa DISPLAY_NAME se disponível, senão SCRAPER_TYPE
                 scraper_name = getattr(self, 'DISPLAY_NAME', '') or scraper_type
         
         return self._enricher.enrich(torrents, skip_metadata, skip_trackers, filter_func, scraper_name=scraper_name)
     
     def _ensure_titles_complete(self, torrents: List[Dict]) -> None:
-        """
-        Garante que os títulos dos torrents estão completos, buscando metadata se necessário.
-        Isso é importante para que o filtro funcione corretamente com títulos completos.
-        
-        NOTA: Torrents com 'dn' completo já têm título completo do prepare_release_title,
-        então só buscamos metadata para títulos muito curtos (< 10 chars) que podem ter
-        falhado na busca anterior ou não tinham 'dn'.
-        """
+        """Garante que os títulos dos torrents estão completos"""
         from magnet.metadata import fetch_metadata_from_itorrents
         
         for torrent in torrents:
-            # Só busca metadata se o título parece incompleto (muito curto)
-            # Torrents com 'dn' completo já têm título completo, então não precisam buscar
             title = torrent.get('title', '')
             if not title or len(title.strip()) < 10:
                 info_hash = torrent.get('info_hash')
@@ -421,21 +368,14 @@ class BaseScraper(ABC):
                         if metadata and metadata.get('name'):
                             name = metadata.get('name', '').strip()
                             if name and len(name) >= 3:
-                                # Atualiza o título se encontrou um melhor
                                 torrent['title'] = name
                     except Exception:
                         pass
     
     def _fetch_metadata_batch(self, torrents: List[Dict]) -> None:
-        """
-        Busca metadata para todos os torrents de uma vez e armazena no objeto torrent.
-        Isso evita buscas duplicadas quando precisamos de size e date.
-        Processa em paralelo para melhor performance.
-        """
+        """Busca metadata para todos os torrents de uma vez"""
         from magnet.metadata import fetch_metadata_from_itorrents
         from magnet.parser import MagnetParser
-        
-        # Filtra torrents que precisam de metadata
         torrents_to_fetch = [
             t for t in torrents
             if not t.get('_metadata_fetched') and t.get('magnet_link')
@@ -444,7 +384,6 @@ class BaseScraper(ABC):
         if not torrents_to_fetch:
             return
         
-        # Função auxiliar para buscar metadata de um único torrent - retorna (torrent, metadata)
         def fetch_metadata_for_torrent(torrent: Dict) -> tuple:
             try:
                 # Obtém info_hash
@@ -459,17 +398,15 @@ class BaseScraper(ABC):
                 if not info_hash:
                     return (torrent, None)
                 
-                # Busca metadata com timeout
                 metadata = fetch_metadata_from_itorrents(info_hash)
                 return (torrent, metadata)
             except Exception:
                 return (torrent, None)
         
-        # Processa em paralelo se houver múltiplos torrents
         if len(torrents_to_fetch) > 1:
             from concurrent.futures import ThreadPoolExecutor, as_completed
             
-            max_workers = min(8, len(torrents_to_fetch))  # Máximo de 8 workers simultâneos
+            max_workers = min(8, len(torrents_to_fetch))
             
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_torrent = {
@@ -479,15 +416,13 @@ class BaseScraper(ABC):
                 
                 for future in as_completed(future_to_torrent):
                     try:
-                        torrent, metadata = future.result(timeout=10)  # Timeout de 10 segundos
+                        torrent, metadata = future.result(timeout=10)
                         if metadata:
                             torrent['_metadata'] = metadata
                             torrent['_metadata_fetched'] = True
                     except Exception as e:
-                        # Ignora erros, os fallbacks vão tentar depois
                         pass
         else:
-            # Processa sequencialmente se houver apenas 1 torrent
             for torrent in torrents_to_fetch:
                 try:
                     torrent, metadata = fetch_metadata_for_torrent(torrent)
@@ -495,49 +430,28 @@ class BaseScraper(ABC):
                         torrent['_metadata'] = metadata
                         torrent['_metadata_fetched'] = True
                 except Exception:
-                    pass  # Ignora erros, os fallbacks vão tentar depois
+                    pass
 
     def _apply_size_fallback(self, torrents: List[Dict], skip_metadata: bool = False) -> None:
-        """
-        Aplica fallbacks para obter tamanho do torrent.
-        
-        Ordem de prioridade (metadata é mais confiável):
-        1. Busca via metadata API (iTorrents.org) - PRIORIDADE (mais confiável)
-           - Verifica cache Redis primeiro
-           - Se não tiver em cache, busca no iTorrents.org
-        2. Parâmetro 'xl' do magnet link - FALLBACK
-           - Extrai do próprio link magnet (mais rápido, mas nem sempre disponível)
-        3. Tamanho do HTML (extraído pelo scraper) - FALLBACK FINAL
-           - Usa o tamanho que o scraper extraiu do HTML do site
-        
-        Args:
-            torrents: Lista de torrents para processar
-            skip_metadata: Se True, pula busca de metadata (útil para query vazia)
-        """
-        # Metadata sempre habilitado (não deve ser pulado apenas se skip_metadata=True)
+        """Aplica fallbacks para obter tamanho do torrent"""
         metadata_enabled = not skip_metadata
         
         for torrent in torrents:
-            # Salva tamanho do HTML como fallback final (se existir)
             html_size = torrent.get('size', '')
             
             magnet_link = torrent.get('magnet_link')
             if not magnet_link:
                 continue
             
-            # Parseia magnet uma vez para reutilizar
             magnet_data = None
             try:
                 magnet_data = MagnetParser.parse(magnet_link)
             except Exception:
                 pass
             
-            # Limpa tamanho atual para tentar metadata primeiro
             torrent['size'] = ''
             
-            # Tentativa 1: Busca via metadata API (iTorrents.org) - PRIORIDADE
             if metadata_enabled:
-                # Tenta usar metadata já buscado primeiro
                 if torrent.get('_metadata') and 'size' in torrent['_metadata']:
                     try:
                         from utils.text.text_processing import format_bytes
@@ -545,14 +459,12 @@ class BaseScraper(ABC):
                         formatted_size = format_bytes(size_bytes)
                         if formatted_size:
                             torrent['size'] = formatted_size
-                            continue  # Tamanho encontrado, passa para próximo
+                            continue
                     except Exception:
                         pass
                 
-                # Se não tem metadata em cache, busca agora
                 try:
                     from magnet.metadata import get_torrent_size
-                    # Obtém info_hash do torrent ou do magnet parseado
                     info_hash = torrent.get('info_hash')
                     if not info_hash and magnet_data:
                         info_hash = magnet_data.get('info_hash')
@@ -561,11 +473,10 @@ class BaseScraper(ABC):
                         metadata_size = get_torrent_size(magnet_link, info_hash)
                         if metadata_size:
                             torrent['size'] = metadata_size
-                            continue  # Tamanho encontrado, passa para próximo
+                            continue
                 except Exception:
                     pass
             
-            # Tentativa 2: Parâmetro 'xl' do magnet link - FALLBACK
             if not torrent.get('size') and magnet_data:
                 try:
                     xl_value = magnet_data.get('params', {}).get('xl')
@@ -574,46 +485,29 @@ class BaseScraper(ABC):
                             formatted_size = format_bytes(int(xl_value))
                             if formatted_size:
                                 torrent['size'] = formatted_size
-                                continue  # Tamanho encontrado, passa para próximo
+                                continue
                         except (ValueError, TypeError):
                             pass
                 except Exception:
                     pass
             
-            # Tentativa 3: Usa tamanho do HTML (fallback final)
             if not torrent.get('size') and html_size:
                 torrent['size'] = html_size
-                continue  # Tamanho encontrado, passa para próximo
+                continue
             
-            # Se ainda não tem tamanho, mantém o que veio do HTML (se houver)
             if not torrent.get('size') and html_size:
                 torrent['size'] = html_size
 
     def _apply_date_fallback(self, torrents: List[Dict], skip_metadata: bool = False) -> None:
-        """
-        Aplica fallback para obter data de criação do torrent via metadata API.
-        Usa creation_date do torrent como date, mantendo date do HTML como fallback.
-        
-        Ordem de tentativas (se metadata habilitado):
-        1. Busca creation_date via metadata API (iTorrents.org) - PADRÃO
-        2. Mantém date do HTML (se extraído pelo scraper) - FALLBACK
-        
-        Args:
-            torrents: Lista de torrents para processar
-            skip_metadata: Se True, pula busca de metadata (útil para query vazia)
-        """
+        """Aplica fallback para obter data de criação do torrent"""
         from datetime import datetime
         
-        # Metadata sempre habilitado (não deve ser pulado apenas se skip_metadata=True)
         metadata_enabled = not skip_metadata
         
         if not metadata_enabled:
-            return  # Se metadata desabilitado, mantém date do HTML
+            return
         
         for torrent in torrents:
-            # Se já tem date do HTML, só substitui se conseguir via metadata
-            has_html_date = bool(torrent.get('date'))
-            
             magnet_link = torrent.get('magnet_link')
             if not magnet_link:
                 continue
@@ -630,30 +524,23 @@ class BaseScraper(ABC):
             if not info_hash:
                 continue
             
-            # Busca metadata completo (reutiliza metadata já buscado se disponível)
             try:
-                # Tenta usar metadata já buscado primeiro
                 metadata = torrent.get('_metadata')
                 if not metadata:
                     from magnet.metadata import fetch_metadata_from_itorrents
                     metadata = fetch_metadata_from_itorrents(info_hash)
                 
                 if metadata and metadata.get('creation_date'):
-                    # Converte timestamp para datetime
                     creation_timestamp = metadata['creation_date']
                     try:
                         creation_date = datetime.fromtimestamp(creation_timestamp)
-                        # Atualiza date com creation_date do torrent
                         torrent['date'] = creation_date.isoformat()
                     except (ValueError, OSError):
-                        # Se falhar, mantém date do HTML (se houver)
                         pass
             except Exception:
-                # Se falhar, mantém date do HTML (se houver)
                 pass
 
     def _attach_peers(self, torrents: List[Dict]) -> None:
-        # Trackers sempre habilitados (sempre ON)
         if not self.tracker_service:
             return
         infohash_map: Dict[str, List[str]] = {}
@@ -661,7 +548,6 @@ class BaseScraper(ABC):
             info_hash = (torrent.get('info_hash') or '').lower()
             if not info_hash or len(info_hash) != 40:
                 continue
-            # Se o resultado já veio com contadores válidos, mantém para não repetir consultas
             if (torrent.get('seed_count') or 0) > 0 or (torrent.get('leech_count') or 0) > 0:
                 continue
             trackers = torrent.get('trackers') or []

@@ -12,7 +12,6 @@ from utils.text.text_processing import format_bytes
 logger = logging.getLogger(__name__)
 
 
-# Enricher de torrents - adiciona metadata, trackers, etc.
 class TorrentEnricher:
     def __init__(self):
         self.tracker_service = get_tracker_service()
@@ -23,25 +22,20 @@ class TorrentEnricher:
         if not torrents:
             return torrents
         
-        # Remove duplicados baseado em info_hash
         torrents = self._remove_duplicates(torrents)
         
-        # Busca metadata para títulos primeiro (se necessário)
         if not skip_metadata:
             self._ensure_titles_complete(torrents)
         
-        # Aplica filtro após títulos completos
         total_before_filter = len(torrents)
         if filter_func:
             torrents = [t for t in torrents if filter_func(t)]
             filtered_count = total_before_filter - len(torrents)
             approved_count = len(torrents)
         else:
-            # Sem filtro: todos são aprovados
             filtered_count = 0
             approved_count = len(torrents)
         
-        # Armazena estatísticas para acesso externo
         self._last_filter_stats = {
             'total': total_before_filter,
             'filtered': filtered_count,
@@ -52,16 +46,13 @@ class TorrentEnricher:
         if not torrents:
             return torrents
         
-        # Busca metadata para size e date
         if not skip_metadata:
             self._fetch_metadata_batch(torrents)
         
-        # Aplica fallbacks
         self._apply_size_fallback(torrents, skip_metadata=skip_metadata)
         self._apply_date_fallback(torrents, skip_metadata=skip_metadata)
         self._apply_imdb_fallback(torrents)
         
-        # Busca trackers
         if not skip_trackers:
             self._attach_peers(torrents)
         

@@ -11,7 +11,6 @@ from scraper import available_scraper_types
 logger = logging.getLogger(__name__)
 
 
-# Bootstrap da aplicação - inicialização e configuração
 class Bootstrap:
     @staticmethod
     def initialize_redis() -> None:
@@ -19,17 +18,14 @@ class Bootstrap:
         try:
             init_redis()
         except Exception:
-            pass  # Redis é opcional
+            pass
     
     @staticmethod
     def create_app() -> Flask:
         """Cria e configura aplicação Flask"""
         app = Flask(__name__)
         
-        # Inicializa Redis
         Bootstrap.initialize_redis()
-        
-        # Registra rotas
         register_routes(app)
         
         logger.info(f"Servidor iniciado na porta {Config.PORT}")

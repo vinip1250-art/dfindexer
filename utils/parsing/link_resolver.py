@@ -15,21 +15,16 @@ from cache.redis_keys import protlink_key
 
 logger = logging.getLogger(__name__)
 
-# Rate limiting para links protegidos
+# Rate limiting
 _LOCK = threading.Lock()
-_LAST_REQUEST_TIME = {}  # {domain: timestamp}
-_MIN_DELAY_BETWEEN_REQUESTS = 0.2  # 200ms entre requisições para o mesmo domínio
-_MAX_CONCURRENT_REQUESTS = 5  # Máximo de requisições simultâneas
-_CURRENT_REQUESTS = 0
+_LAST_REQUEST_TIME = {}
+_MIN_DELAY_BETWEEN_REQUESTS = 0.2
+_MAX_CONCURRENT_REQUESTS = 5
 _REQUEST_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_REQUESTS)
 
 
-# Verifica se um link é protegido (precisa ser resolvido)
 def is_protected_link(href: str) -> bool:
-    """
-    Verifica se um link é protegido e precisa ser resolvido.
-    Retorna True se o link contém padrões de links protegidos.
-    """
+    """Verifica se um link é protegido e precisa ser resolvido."""
     if not href:
         return False
     
@@ -46,148 +41,97 @@ def is_protected_link(href: str) -> bool:
     return any(pattern in href for pattern in protected_patterns)
 
 
-# Decodifica link de adware (systemads, seuvideo) - extrai o parâmetro id e decodifica
 def decode_ad_link(ad_link: str) -> Optional[str]:
-    """
-    Decodifica link de adware (systemads.org, seuvideo.xyz).
-    Extrai o parâmetro 'id' da URL e decodifica para obter o magnet link.
-    
-    Baseado no código Go original que usa utils.DecodeAdLink.
-    O algoritmo parece usar uma codificação customizada que precisa ser decodificada em etapas.
-    """
+    """Decodifica link de adware (systemads.org, seuvideo.xyz)."""
     if not ad_link:
         return None
     
     try:
-        # Parse a URL
         parsed_url = urlparse(ad_link)
         query_params = parse_qs(parsed_url.query)
-        
-        # Extrai o parâmetro 'id'
         id_param = query_params.get('id', [None])[0]
+        
         if not id_param:
             return None
         
-        # O código Go usa utils.DecodeAdLink que provavelmente faz uma decodificação customizada
-        # Vamos tentar diferentes métodos baseados em padrões comuns
+        # Tenta diferentes métodos de decodificação base64
+        methods = [
+            lambda x: x,
+            lambda x: unquote(x),
+            lambda x: x.replace('-', '+').replace('_', '/'),
+        ]
         
-        # Método 1: Base64 padrão direto
-        try:
-            padding = 4 - len(id_param) % 4
-            if padding != 4:
-                id_padded = id_param + '=' * padding
-            else:
-                id_padded = id_param
-            decoded_bytes = base64.b64decode(id_padded)
-            decoded = decoded_bytes.decode('utf-8')
-            if decoded.startswith('magnet:'):
-                logger.debug("Decodificação base64 padrão funcionou!")
-                return decoded
-        except Exception:
-            pass
+        for method in methods:
+            try:
+                processed = method(id_param)
+                padding = 4 - len(processed) % 4
+                if padding != 4:
+                    processed = processed + '=' * padding
+                
+                decoded_bytes = base64.b64decode(processed)
+                decoded = decoded_bytes.decode('utf-8')
+                
+                if decoded.startswith('magnet:'):
+                    return decoded
+            except Exception:
+                continue
         
-        # Método 2: Base64 com URL decode primeiro
-        try:
-            id_decoded = unquote(id_param)
-            padding = 4 - len(id_decoded) % 4
-            if padding != 4:
-                id_padded = id_decoded + '=' * padding
-            else:
-                id_padded = id_decoded
-            decoded_bytes = base64.b64decode(id_padded)
-            decoded = decoded_bytes.decode('utf-8')
-            if decoded.startswith('magnet:'):
-                logger.debug("Decodificação base64 com URL decode funcionou!")
-                return decoded
-        except Exception:
-            pass
-        
-        # Método 3: Base64URL (com - e _)
-        try:
-            id_base64url = id_param.replace('-', '+').replace('_', '/')
-            padding = 4 - len(id_base64url) % 4
-            if padding != 4:
-                id_base64url = id_base64url + '=' * padding
-            decoded_bytes = base64.b64decode(id_base64url)
-            decoded = decoded_bytes.decode('utf-8')
-            if decoded.startswith('magnet:'):
-                logger.debug("Decodificação base64url funcionou!")
-                return decoded
-        except Exception:
-            pass
-        
-        # Método 4: Tenta decodificar como se fosse uma string codificada em múltiplas camadas
-        # Alguns sistemas codificam múltiplas vezes
+        # Tenta múltiplas camadas de decodificação
         try:
             current = id_param
-            for _ in range(3):  # Tenta até 3 camadas
+            for _ in range(3):
                 padding = 4 - len(current) % 4
                 if padding != 4:
-                    current_padded = current + '=' * padding
-                else:
-                    current_padded = current
-                decoded_bytes = base64.b64decode(current_padded)
+                    current = current + '=' * padding
+                
+                decoded_bytes = base64.b64decode(current)
                 decoded_str = decoded_bytes.decode('utf-8', errors='ignore')
+                
                 if decoded_str.startswith('magnet:'):
-                    logger.debug(f"Decodificação em múltiplas camadas funcionou!")
                     return decoded_str
-                # Se não é magnet, pode ser que precise decodificar mais uma vez
+                
                 current = decoded_str
         except Exception:
             pass
         
-        # Nota: A decodificação direta do parâmetro 'id' geralmente falha porque o systemads
-        # não usa decodificação direta - ele usa redirects HTTP até a página final onde
-        # o magnet está codificado em base64 no atributo data-download do body.
-        # Isso é esperado e o código continuará com o método de redirects.
         return None
-        
-    except Exception as e:
+    except Exception:
         return None
 
 
-# Resolve link protegido (protlink) seguindo todos os redirects e extraindo o magnet real - retorna URL do magnet link ou None se não conseguir resolver
 def resolve_protected_link(protlink_url: str, session: requests.Session, base_url: str = '', redis=None) -> Optional[str]:
-    # Tenta obter do cache primeiro
+    """Resolve link protegido seguindo redirects e extraindo o magnet link."""
     if redis:
         try:
             cache_key = protlink_key(protlink_url)
             cached = redis.get(cache_key)
             if cached:
-                magnet_link = cached.decode('utf-8')
                 logger.debug(f"[CACHE REDIS HIT] Link protegido: {protlink_url[:50]}...")
-                return magnet_link
+                return cached.decode('utf-8')
         except Exception:
-            pass  # Ignora erros de cache
+            pass
     
-    # Para links systemads/seuvideo, tenta decodificar diretamente primeiro (mais rápido)
     if 'systemads.org' in protlink_url or 'seuvideo.xyz' in protlink_url or 'get.php' in protlink_url:
         decoded_magnet = decode_ad_link(protlink_url)
         if decoded_magnet:
-            logger.debug(f"Link systemads/seuvideo decodificado com sucesso!")
-            # Salva no cache
             if redis:
                 try:
                     cache_key = protlink_key(protlink_url)
-                    redis.setex(cache_key, 7 * 24 * 3600, decoded_magnet)  # 7 dias
+                    redis.setex(cache_key, 7 * 24 * 3600, decoded_magnet)
                 except Exception:
                     pass
             return decoded_magnet
     
-    # Variáveis para rastreamento
     redirect_count = 0
     
-    # Rate limiting: usa semáforo para limitar requisições simultâneas
     with _REQUEST_SEMAPHORE:
-        # Se decodificação falhou ou não é systemads, segue com método de redirect
         try:
-            # Segue todos os redirects manualmente até chegar na página final
             current_url = protlink_url
-            max_redirects = 20  # Aumentado para 20 para systemads/autotop que podem ter muitos redirects
-            timeout = 5  # Timeout padrão de 5s
+            max_redirects = 20
+            timeout = 5
             
             while redirect_count < max_redirects:
-                # Rate limiting por domínio: adiciona delay entre requisições para o mesmo domínio
+                # Rate limiting por domínio
                 try:
                     parsed_url = urlparse(current_url)
                     domain = parsed_url.netloc or parsed_url.hostname or 'unknown'
@@ -203,9 +147,8 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                         
                         _LAST_REQUEST_TIME[domain] = time.time()
                 except Exception:
-                    pass  # Ignora erros de rate limiting
+                    pass
                 
-                # Aumenta timeout para links do Twitter que podem demorar mais
                 request_timeout = 10 if 't.co' in current_url else timeout
                 
                 try:
@@ -218,16 +161,13 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                             'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-                            'Accept-Encoding': 'gzip, deflate',  # Removido 'br' que pode causar problemas
+                            'Accept-Encoding': 'gzip, deflate',
                             'Connection': 'keep-alive',
                             'Upgrade-Insecure-Requests': '1'
                         }
                     )
-                except requests.exceptions.ReadTimeout as e:
-                    # Se for timeout no Twitter, tenta seguir sem esperar (pode estar bloqueado)
+                except requests.exceptions.ReadTimeout:
                     if 't.co' in current_url:
-                        logger.debug(f"Timeout ao acessar link do Twitter {current_url[:50]}... Pulando.")
-                        # Tenta seguir o redirect usando allow_redirects=True como fallback
                         try:
                             response = session.get(
                                 current_url,
@@ -243,36 +183,26 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                                     'Upgrade-Insecure-Requests': '1'
                                 }
                             )
-                            # Se conseguiu seguir, atualiza current_url para a URL final
                             current_url = response.url
-                            # Continua processando a resposta
                         except Exception:
-                            logger.debug(f"Não foi possível seguir redirect do Twitter {current_url[:50]}...")
                             break
                     else:
-                        # Para outros timeouts, apenas loga e quebra
-                        logger.debug(f"Timeout ao acessar {current_url[:50]}...")
                         break
-                except requests.exceptions.RequestException as e:
-                    # Outros erros de requisição (conexão, SSL, etc.)
-                    logger.debug(f"Erro ao acessar {current_url[:50]}...: {type(e).__name__}")
+                except requests.exceptions.RequestException:
                     break
                 
-                # Se recebeu um redirect, segue para o próximo
                 if response.status_code in (301, 302, 303, 307, 308):
                     location = response.headers.get('Location', '')
                     
                     if location.startswith('magnet:'):
-                        # Se encontrou magnet diretamente no redirect, salva no cache
                         if redis:
                             try:
                                 cache_key = protlink_key(protlink_url)
-                                redis.setex(cache_key, 7 * 24 * 3600, location)  # 7 dias
+                                redis.setex(cache_key, 7 * 24 * 3600, location)
                             except Exception:
-                                pass  # Ignora erros de cache
+                                pass
                         return location
                     
-                    # Resolve URL relativa
                     if location:
                         current_url = urljoin(current_url, location)
                         redirect_count += 1
@@ -280,93 +210,74 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                     else:
                         break
                 
-                # Se chegou na página final (200), verifica se há mais redirects no HTML
                 if response.status_code == 200:
-                    # Processa o conteúdo da resposta
                     try:
                         html_content = response.text
-                        # Verifica se o conteúdo parece estar comprimido (caracteres binários)
+                        
                         if html_content and (html_content.startswith('\x1f\x8b') or '\x00' in html_content[:100] or not html_content.strip()):
-                            # Parece estar comprimido ou inválido, tenta descomprimir manualmente
                             import gzip
                             try:
                                 html_content = gzip.decompress(response.content).decode('utf-8')
                             except Exception:
-                                # Tenta usar o conteúdo bruto com decode errors='ignore'
                                 html_content = response.content.decode('utf-8', errors='ignore')
                         
                         doc = BeautifulSoup(html_content, 'html.parser')
-                        
-                        # Verifica se há um link de redirect no HTML (como redirectBtn)
-                        # Isso acontece quando a página usa JavaScript para fazer redirect
                         redirect_link = None
                         
-                        # Método 1: Busca por links <a> com ID que contenha "redirect" ou href que contenha "receber.php" ou "redirecionando"
+                        # Busca redirect no HTML
                         for a in doc.select('a[id*="redirect"], a[id*="Redirect"], a[href*="receber.php"], a[href*="redirecionando"]'):
                             href = a.get('href', '')
                             if href and ('receber.php' in href or 'redirecionando' in href.lower() or 'recebi.php' in href):
                                 redirect_link = href
                                 break
                         
-                        # Método 2: Busca em meta refresh
                         if not redirect_link:
                             for meta in doc.select('meta[http-equiv="refresh"], meta[http-equiv="Refresh"]'):
                                 content = meta.get('content', '')
-                                # Extrai URL do meta refresh: content="0;URL=http://..."
                                 url_match = re.search(r'url\s*=\s*([^;]+)', content, re.IGNORECASE)
                                 if url_match:
                                     redirect_link = url_match.group(1).strip()
                                     break
                         
-                        # Método 3: Busca em JavaScript location.replace ou location.href
                         if not redirect_link:
                             for script in doc.select('script'):
                                 script_text = script.string or ''
                                 if script_text:
-                                    # Busca por location.replace("url") ou location.href = "url"
-                                    # Aceita URLs com escapes (\/) e sem escapes
                                     patterns = [
                                         r'location\.replace\(["\']([^"\']+)["\']\)',
-                                        r'location\.replace\(["\']((?:[^"\'\\]|\\.)+)["\']\)',  # Aceita escapes
+                                        r'location\.replace\(["\']((?:[^"\'\\]|\\.)+)["\']\)',
                                         r'location\.href\s*=\s*["\']([^"\']+)["\']',
-                                        r'location\.href\s*=\s*["\']((?:[^"\'\\]|\\.)+)["\']',  # Aceita escapes
+                                        r'location\.href\s*=\s*["\']((?:[^"\'\\]|\\.)+)["\']\)',
                                         r'window\.location\s*=\s*["\']([^"\']+)["\']',
                                     ]
                                     for pattern in patterns:
                                         match = re.search(pattern, script_text, re.IGNORECASE)
                                         if match:
                                             redirect_link = match.group(1)
-                                            # Remove escapes de barra e outros escapes comuns
                                             redirect_link = redirect_link.replace('\\/', '/').replace('\\"', '"').replace("\\'", "'").replace('\\\\', '\\')
                                             break
                                     if redirect_link:
                                         break
                             
-                            # Se ainda não encontrou, busca no HTML bruto por location.replace
                             if not redirect_link:
                                 location_match = re.search(r'location\.replace\(["\']((?:[^"\'\\]|\\.)+)["\']\)', html_content, re.IGNORECASE)
                                 if location_match:
                                     redirect_link = location_match.group(1)
                                     redirect_link = redirect_link.replace('\\/', '/').replace('\\"', '"').replace("\\'", "'").replace('\\\\', '\\')
                         
-                        # Método 4: Busca no HTML bruto por padrões comuns
                         if not redirect_link:
-                            # Busca por padrões como href="https://redirecionandovoce.info/receber.php?id=..."
                             redirect_match = re.search(r'href=["\'](https?://[^"\']*(?:receber|recebi|link)\.php[^"\']*)["\']', html_content, re.IGNORECASE)
                             if redirect_match:
                                 redirect_link = redirect_match.group(1)
                         
-                        # ANTES de seguir redirect, verifica se já há um magnet link na página atual
-                        # Às vezes o magnet está visível antes do redirect JavaScript
+                        # Verifica se já há magnet na página antes de seguir redirect
                         magnet_check = None
-                        # Busca em links <a>
                         for a in doc.select('a[href^="magnet:"], a[href*="magnet:"]'):
                             magnet_href = a.get('href', '')
                             if magnet_href.startswith('magnet:'):
                                 magnet_check = magnet_href
                                 break
                         
-                        # Busca em scripts JavaScript
                         if not magnet_check:
                             for script in doc.select('script'):
                                 script_text = script.string or ''
@@ -376,34 +287,23 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                                         magnet_check = magnet_match.group(0)
                                         break
                         
-                        # Busca direto no HTML bruto
                         if not magnet_check:
                             magnet_match = re.search(r'magnet:\?[^"\'\s<>]+', html_content)
                             if magnet_match:
                                 magnet_check = magnet_match.group(0)
                         
-                        # Se encontrou magnet, retorna imediatamente
                         if magnet_check:
                             if redis:
                                 try:
                                     cache_key = protlink_key(protlink_url)
-                                    redis.setex(cache_key, 7 * 24 * 3600, magnet_check)  # 7 dias
+                                    redis.setex(cache_key, 7 * 24 * 3600, magnet_check)
                                 except Exception:
                                     pass
                             return magnet_check
                         
-                        # Se encontrou um link de redirect, verifica se não é uma página de conteúdo normal
+                        # Verifica se deve seguir redirect
                         if redirect_link:
-                            # Não segue redirects para páginas que parecem ser conteúdo/artigos normais
-                            # (não são links protegidos com parâmetros id)
                             redirect_lower = redirect_link.lower()
-                            skip_patterns = [
-                                r'/[^/]+-[^/]+-[^/]+/',  # URLs com múltiplos hífens (artigos)
-                                r'/[^/?]+\.html?$',  # URLs terminando em .html ou .htm
-                                r'/[^/?]+/$',  # URLs terminando em / sem parâmetros
-                            ]
-                            
-                            # Verifica se é um link protegido (tem parâmetros id ou é receber/recebi/link.php)
                             is_protected_redirect = (
                                 'receber.php' in redirect_lower or 
                                 'recebi.php' in redirect_lower or 
@@ -413,77 +313,58 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                                 '&id=' in redirect_lower
                             )
                             
-                            # Se não é um link protegido, verifica se deve seguir mesmo assim
-                            # Às vezes o magnet está após alguns redirects para páginas de conteúdo
-                            if not is_protected_redirect:
-                                # Só pula se realmente parecer ser conteúdo E não tivermos seguido muitos redirects ainda
-                                # Se já seguimos vários redirects protegidos, pode valer a pena seguir mais um
-                                skip_patterns_filtered = [
-                                    r'/[^/]+-[^/]+-[^/]+/',  # URLs com múltiplos hífens (artigos)
-                                    r'/[^/?]+\.html?$',  # URLs terminando em .html ou .htm
+                            if not is_protected_redirect and redirect_count < 5:
+                                skip_patterns = [
+                                    r'/[^/]+-[^/]+-[^/]+/',
+                                    r'/[^/?]+\.html?$',
                                 ]
-                                
-                                # Se já seguimos muitos redirects protegidos (mais de 5), segue mesmo páginas de conteúdo
-                                # porque o magnet pode estar logo após
-                                should_skip = redirect_count < 5  # Só pula se ainda estamos no início
-                                
-                                if should_skip:
-                                    for pattern in skip_patterns_filtered:
-                                        if re.search(pattern, redirect_link):
-                                            redirect_link = None
-                                            break
+                                for pattern in skip_patterns:
+                                    if re.search(pattern, redirect_link):
+                                        redirect_link = None
+                                        break
                             
                             if redirect_link:
-                                # Resolve URL relativa e decodifica entidades HTML
                                 redirect_link = html.unescape(redirect_link)
                                 redirect_url = urljoin(current_url, redirect_link)
                                 current_url = redirect_url
                                 redirect_count += 1
-                                continue  # Volta para o loop para seguir o redirect
+                                continue
                     
                     except Exception as e:
                         logger.error(f"Erro ao processar resposta HTML: {e}")
                         break
                 
-                # Se não há mais redirects, extrai o magnet da página final
+                # Extrai magnet da página final
                 if response.status_code == 200:
                     magnet_link = None
                     
-                    # Método 1: Busca por links <a> com href magnet (preserva trackers completos)
                     for a in doc.select('a[href^="magnet:"], a[href*="magnet:"]'):
                         magnet_href = a.get('href', '')
                         if magnet_href.startswith('magnet:'):
-                            # Usa o href completo do elemento para preservar todos os parâmetros (incluindo trackers)
                             magnet_link = magnet_href
                             break
                     
-                    # Método 2: Busca em meta refresh (preserva trackers completos)
                     if not magnet_link:
                         for meta in doc.select('meta[http-equiv="refresh"]'):
                             content = meta.get('content', '')
                             if 'magnet:' in content:
-                                # Busca magnet completo incluindo todos os parâmetros até encontrar espaço, aspas ou ponto e vírgula
-                                # Permite caracteres especiais que podem aparecer em trackers (como &, =, /, :, etc)
                                 match = re.search(r'magnet:\?[^;\s"\']+', content)
                                 if match:
                                     magnet_link = match.group(0)
-                                    # Tenta estender até encontrar o final real do magnet (pode ter mais parâmetros após ;)
                                     extended = re.search(r'magnet:\?[^"\']+', content[match.start():])
                                     if extended and len(extended.group(0)) > len(magnet_link):
                                         magnet_link = extended.group(0)
                                     break
                     
-                    # Método 2.5: Busca em window.location ou JavaScript de redirect
                     if not magnet_link:
-                        # Procura por padrões JavaScript comuns que fazem redirect para magnet
                         js_patterns = [
                             r'window\.location\s*=\s*["\'](magnet:[^"\']+)["\']',
                             r'location\.href\s*=\s*["\'](magnet:[^"\']+)["\']',
                             r'window\.open\(["\'](magnet:[^"\']+)["\']',
                             r'redirect.*?["\'](magnet:[^"\']+)["\']',
-                            r'location\s*=\s*["\'](magnet:[^"\']+)["\']',  # location sem window
-                            r'["\'](magnet:\?[^"\']+)["\']',  # Qualquer magnet entre aspas
-                            r'decodeURIComponent\(["\']([^"\']+)["\']\)',  # Pode estar codificado
+                            r'location\s*=\s*["\'](magnet:[^"\']+)["\']',
+                            r'["\'](magnet:\?[^"\']+)["\']',
+                            r'decodeURIComponent\(["\']([^"\']+)["\']\)',
                         ]
                         for script in doc.select('script'):
                             script_text = script.string or ''
@@ -491,10 +372,8 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                                 match = re.search(pattern, script_text, re.IGNORECASE | re.DOTALL)
                                 if match:
                                     potential_magnet = match.group(1)
-                                    # Se não começa com magnet:, pode estar codificado
                                     if not potential_magnet.startswith('magnet:'):
                                         try:
-                                            from urllib.parse import unquote
                                             potential_magnet = unquote(potential_magnet)
                                         except:
                                             pass
@@ -503,72 +382,55 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                                         break
                             if magnet_link:
                                 break
-                        
-                        # Se ainda não encontrou, busca no HTML bruto por padrões JavaScript
-                        if not magnet_link:
-                            js_raw_patterns = [
-                                r'window\.location\s*=\s*["\'](magnet:\?[^"\']+)["\']',
-                                r'location\.href\s*=\s*["\'](magnet:\?[^"\']+)["\']',
-                                r'["\'](magnet:\?[^"\']+)["\']',
-                            ]
-                            for pattern in js_raw_patterns:
-                                matches = re.findall(pattern, html_content, re.IGNORECASE | re.DOTALL)
-                                if matches:
-                                    # Pega o match mais longo
-                                    magnet_link = max(matches, key=len)
-                                    logger.debug("Magnet encontrado em JavaScript no HTML bruto!")
-                                    break
                     
-                    # Método 3: Busca em scripts JavaScript (limitado aos primeiros 3 scripts para performance)
-                    # IMPORTANTE: Preserva trackers completos usando regex mais permissivo
                     if not magnet_link:
-                        for script in doc.select('script')[:3]:  # Limita a 3 scripts para não demorar muito
+                        js_raw_patterns = [
+                            r'window\.location\s*=\s*["\'](magnet:\?[^"\']+)["\']',
+                            r'location\.href\s*=\s*["\'](magnet:\?[^"\']+)["\']',
+                            r'["\'](magnet:\?[^"\']+)["\']',
+                        ]
+                        for pattern in js_raw_patterns:
+                            matches = re.findall(pattern, html_content, re.IGNORECASE | re.DOTALL)
+                            if matches:
+                                magnet_link = max(matches, key=len)
+                                break
+                    
+                    if not magnet_link:
+                        for script in doc.select('script')[:3]:
                             script_text = script.string or ''
                             if 'magnet:' in script_text:
-                                # Busca todos os matches possíveis
-                                # Permite caracteres especiais que podem aparecer em trackers
                                 matches = re.findall(r'magnet:\?[^"\'\s\)]+', script_text)
                                 if matches:
-                                    # Pega o match mais longo (mais completo, com mais trackers)
                                     magnet_link = max(matches, key=len)
-                                    # Tenta encontrar um match ainda mais completo procurando até o final da linha ou próximo caractere especial
                                     for match in matches:
                                         if len(match) > len(magnet_link):
                                             magnet_link = match
                                     break
                     
-                    # Método 4: Busca em todos os scripts (não apenas os primeiros 3)
                     if not magnet_link:
                         for script in doc.select('script'):
                             script_text = script.string or ''
                             if 'magnet:' in script_text:
-                                # Busca padrões mais específicos de magnet em JavaScript
                                 patterns = [
-                                    r'magnet:\?[^"\'\s\)]+',  # Padrão original
-                                    r'["\'](magnet:\?[^"\']+)["\']',  # Entre aspas
-                                    r'=?\s*["\'](magnet:\?[^"\']+)["\']',  # Com = antes
+                                    r'magnet:\?[^"\'\s\)]+',
+                                    r'["\'](magnet:\?[^"\']+)["\']',
+                                    r'=?\s*["\'](magnet:\?[^"\']+)["\']',
                                 ]
                                 for pattern in patterns:
                                     matches = re.findall(pattern, script_text)
                                     if matches:
-                                        # Pega o match mais longo
                                         magnet_link = max(matches, key=len)
-                                        logger.debug("Magnet encontrado em script JavaScript!")
                                         break
                                 if magnet_link:
                                     break
                     
-                    # Método 5: Busca em atributos data-* (como data-download) que podem conter magnet codificado em base64
                     if not magnet_link:
-                        # Busca por atributos data-download, data-link, data-magnet, etc.
                         data_attrs = doc.select('[data-download], [data-link], [data-magnet], [data-url]')
                         for elem in data_attrs:
                             for attr in ['data-download', 'data-link', 'data-magnet', 'data-url']:
                                 encoded_value = elem.get(attr, '')
                                 if encoded_value:
-                                    # Tenta decodificar base64 (pode estar em formato URL-safe)
                                     try:
-                                        # Tenta base64 padrão primeiro
                                         padding = 4 - len(encoded_value) % 4
                                         if padding != 4:
                                             encoded_padded = encoded_value + '=' * padding
@@ -578,12 +440,10 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                                         decoded_bytes = base64.b64decode(encoded_padded)
                                         decoded_str = decoded_bytes.decode('utf-8')
                                         
-                                        # Se decodificou e começa com magnet:, usa
                                         if decoded_str.startswith('magnet:'):
                                             magnet_link = decoded_str
                                             break
                                     except Exception:
-                                        # Tenta base64url (com - e _)
                                         try:
                                             base64url = encoded_value.replace('-', '+').replace('_', '/')
                                             padding = 4 - len(base64url) % 4
@@ -597,44 +457,35 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                                         except Exception:
                                             pass
                                     
-                                    # Se não está codificado, verifica se já é um magnet direto
                                     if encoded_value.startswith('magnet:'):
                                         magnet_link = encoded_value
                                         break
                             if magnet_link:
                                 break
                     
-                    # Método 6: Busca direto no texto HTML (último recurso)
-                    # IMPORTANTE: Preserva trackers completos usando regex mais permissivo
                     if not magnet_link:
-                        # Busca magnet completo incluindo todos os parâmetros até encontrar espaço, aspas ou tag HTML
-                        # Permite caracteres especiais que podem aparecer em trackers
                         magnet_match = re.search(r'magnet:\?[^"\'\s<>]+', html_content)
                         if magnet_match:
                             magnet_link = magnet_match.group(0)
                     
-                    # Se encontrou, salva no cache e retorna
                     if magnet_link:
                         if redis:
                             try:
                                 cache_key = protlink_key(protlink_url)
-                                redis.setex(cache_key, 7 * 24 * 3600, magnet_link)  # 7 dias
+                                redis.setex(cache_key, 7 * 24 * 3600, magnet_link)
                             except Exception:
-                                pass  # Ignora erros de cache
+                                pass
                         return magnet_link
                     else:
                         logger.warning(f"Magnet não encontrado na página final após {redirect_count} redirects.")
                         break
                 
-                # Se não é redirect nem 200, para
                 if response.status_code not in (200, 301, 302, 303, 307, 308):
                     logger.warning(f"Status code não esperado: {response.status_code}")
                     break
         
         except Exception as e:
-            # Loga apenas como debug para evitar spam de logs (timeouts são esperados)
             logger.debug(f"Erro ao resolver link protegido {protlink_url[:80]}...: {type(e).__name__}")
     
     logger.warning(f"Falha ao resolver link protegido após {redirect_count} redirects: {protlink_url[:80]}...")
     return None
-

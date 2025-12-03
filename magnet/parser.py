@@ -8,18 +8,14 @@ from urllib.parse import urlparse, parse_qs, unquote
 from typing import Dict, List, Optional
 
 
-# Parser para links magnet
 class MagnetParser:
     @staticmethod
-    # Parse de URI magnet - retorna Dict com info_hash, display_name, trackers, params
     def parse(uri: str) -> Dict:
         parsed = urlparse(uri)
         if parsed.scheme != 'magnet':
             raise ValueError(f"Esquema inválido: {parsed.scheme}")
         
         query = parse_qs(parsed.query)
-        
-        # Extrai info_hash
         xt = query.get('xt', [])
         if not xt:
             raise ValueError("Parâmetro xt não encontrado")
@@ -54,7 +50,6 @@ class MagnetParser:
         }
     
     @staticmethod
-    # Decodifica info_hash (hex ou base32)
     def _decode_infohash(encoded: str) -> bytes:
         if len(encoded) == 40:
             try:

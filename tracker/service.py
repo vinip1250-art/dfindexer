@@ -17,7 +17,6 @@ from .udp_scraper import UDPScraper
 logger = logging.getLogger(__name__)
 
 
-# Verifica se o erro é de conexão com Redis (Redis desabilitado/indisponível)
 def _is_redis_connection_error(error: Exception) -> bool:
     error_str = str(error).lower()
     connection_errors = [
@@ -33,7 +32,6 @@ def _is_redis_connection_error(error: Exception) -> bool:
     return any(err in error_str for err in connection_errors)
 
 
-# Loga erros do Redis de forma mais amigável
 def _log_redis_error(operation: str, error: Exception) -> None:
     if _is_redis_connection_error(error):
         logger.debug(f"Redis indisponível - {operation} usando fallback em memória")
@@ -72,7 +70,6 @@ def _filter_udp(trackers: Iterable[str]) -> List[str]:
     ]
 
 
-# Serviço para obter seeds/leechers de trackers UDP
 class TrackerService:
 
     def __init__(

@@ -30,7 +30,7 @@ class ComandScraper(BaseScraper):
         self.search_url = "?s="
         self.page_pattern = "page/{}/"
         
-        # Mapeamento de meses em português para números (como no código Go)
+        # Mapeamento de meses em português para números
         self.month_replacer = {
             'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
             'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',

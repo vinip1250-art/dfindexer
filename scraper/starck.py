@@ -111,8 +111,7 @@ class StarckScraper(BaseScraper):
         if not doc:
             return []
         
-        # Extrai data da URL (como no Go - getPublishedDateFromRawString)
-        # Extrai data da URL do link
+        # Extrai data da URL
         date = parse_date_from_string(link)
         
         # Fallback: Se não encontrou, usa data atual

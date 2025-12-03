@@ -22,7 +22,6 @@ def _parse_duration(duration_str: str) -> int:
         return int(duration_str)
 
 
-# Configurações da aplicação via variáveis de ambiente
 class Config:
     # Servidor
     PORT: int = int(os.getenv('PORT', '7006'))
@@ -45,13 +44,11 @@ class Config:
     )
     
     # Logging
-    # LOG_LEVEL: 0 (debug), 1 (info), 2 (warn), 3 (error) - valores numéricos como no Go
-    LOG_LEVEL: int = int(os.getenv('LOG_LEVEL', '1'))  # Padrão: 1 (info)
+    LOG_LEVEL: int = int(os.getenv('LOG_LEVEL', '1'))
     LOG_FORMAT: str = os.getenv('LOG_FORMAT', 'console')  # 'json' ou 'console'
     
     # FlareSolverr
     FLARESOLVERR_ADDRESS: Optional[str] = os.getenv('FLARESOLVERR_ADDRESS', None)  # Padrão: None (desabilitado)
     
-    # Query vazia
-    EMPTY_QUERY_MAX_LINKS: int = int(os.getenv('EMPTY_QUERY_MAX_LINKS', '15'))  # Padrão: 15 - Limite de links individuais a processar da página 1 durante testes sem query
+    EMPTY_QUERY_MAX_LINKS: int = int(os.getenv('EMPTY_QUERY_MAX_LINKS', '15'))
     

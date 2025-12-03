@@ -15,7 +15,6 @@ from core.processors.torrent_processor import TorrentProcessor
 
 logger = logging.getLogger(__name__)
 
-# Mapeamento de números para nomes de scrapers (usado pelo Prowlarr)
 SCRAPER_NUMBER_MAP = {
     "1": "starck",
     "2": "rede",
@@ -27,7 +26,6 @@ SCRAPER_NUMBER_MAP = {
 }
 
 
-# Serviço de indexação - lógica de negócio separada dos handlers
 class IndexerService:
     def __init__(self):
         self.enricher = TorrentEnricher()
@@ -43,10 +41,7 @@ class IndexerService:
         
         torrents = scraper.search(query, filter_func=filter_func)
         
-        # Remove campos internos
         self.processor.remove_internal_fields(torrents)
-        
-        # Ordena por data
         self.processor.sort_by_date(torrents)
         
         return torrents
@@ -65,16 +60,11 @@ class IndexerService:
         
         torrents = scraper.get_page(page, max_items=max_links)
         
-        # Atualiza estatísticas do enricher do IndexerService com as do scraper
         if hasattr(scraper, '_enricher') and hasattr(scraper._enricher, '_last_filter_stats'):
             self.enricher._last_filter_stats = scraper._enricher._last_filter_stats
         
-        # Remove campos internos
         self.processor.remove_internal_fields(torrents)
         
-        # Para testes com limite, mantém ordem original
-        # Para vaca, sempre mantém ordem original do site
-        # Caso contrário, ordena por data
         if scraper_type != 'vaca' and not (is_test and Config.EMPTY_QUERY_MAX_LINKS > 0):
             self.processor.sort_by_date(torrents)
         
@@ -97,7 +87,6 @@ class IndexerService:
     
     def validate_scraper_type(self, scraper_type: str) -> tuple[bool, Optional[str]]:
         """Valida tipo de scraper e retorna tipo normalizado"""
-        # Converte número para nome do scraper se necessário
         if scraper_type in SCRAPER_NUMBER_MAP:
             scraper_type = SCRAPER_NUMBER_MAP[scraper_type]
         

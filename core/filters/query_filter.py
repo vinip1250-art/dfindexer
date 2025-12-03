@@ -5,7 +5,6 @@ from typing import Dict, Callable
 from utils.text.text_processing import check_query_match
 
 
-# Filtro de query para torrents
 class QueryFilter:
     @staticmethod
     def create_filter(query: str) -> Callable[[Dict], bool]:

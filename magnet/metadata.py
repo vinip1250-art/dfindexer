@@ -15,29 +15,19 @@ from app.config import Config
 
 logger = logging.getLogger(__name__)
 
-# Cache em memória temporário por requisição (evita buscas duplicadas quando cache Redis está desligado)
 _request_cache = threading.local()
-
-# Rate limiter simples (1 req/s com burst de 2) - reduzido para evitar sobrecarga
 _rate_limiter_lock = threading.Lock()
 _rate_limiter_last_request = 0.0
-_rate_limiter_min_interval = 1.0  # 1 req/s = 1s entre requisições (mais conservador)
-_rate_limiter_burst_tokens = 2  # Burst reduzido
-
-# Circuit breaker para evitar consultas quando há muitos timeouts/503s
+_rate_limiter_min_interval = 1.0
+_rate_limiter_burst_tokens = 2
 _CIRCUIT_BREAKER_KEY = circuit_metadata_key()
-_CIRCUIT_BREAKER_TIMEOUT_THRESHOLD = 3  # Número de timeouts consecutivos antes de desabilitar
-_CIRCUIT_BREAKER_503_THRESHOLD = 5  # Número de 503s consecutivos antes de desabilitar
-_CIRCUIT_BREAKER_DISABLE_DURATION = 60  # 1 minuto de desabilitação após muitos erros
-_CIRCUIT_BREAKER_FAILURE_CACHE_TTL = 60  # Cache de falhas individuais por 1 minuto (Redis)
-_CIRCUIT_BREAKER_503_CACHE_TTL = 300  # Cache de falhas 503 por 5 minutos (Redis)
-
-# Lock por hash para evitar requisições simultâneas ao mesmo hash
+_CIRCUIT_BREAKER_TIMEOUT_THRESHOLD = 3
+_CIRCUIT_BREAKER_503_THRESHOLD = 5
+_CIRCUIT_BREAKER_DISABLE_DURATION = 60
+_CIRCUIT_BREAKER_FAILURE_CACHE_TTL = 60
+_CIRCUIT_BREAKER_503_CACHE_TTL = 300
 _hash_locks = {}
 _hash_locks_lock = threading.Lock()
-
-# Circuit breaker em memória (fallback quando Redis não está disponível)
-# Funciona apenas durante a query atual (via _request_cache)
 
 
 def _is_redis_connection_error(error: Exception) -> bool:
@@ -71,14 +61,11 @@ def _log_redis_error(operation: str, error: Exception, log_once: bool = True) ->
         log_once: Se True, só loga uma vez por operação (evita spam)
     """
     if _is_redis_connection_error(error):
-        # Redis desabilitado/indisponível - mensagem informativa
         logger.debug(f"Redis indisponível - {operation} usando fallback em memória")
     else:
-        # Outro tipo de erro - mostra detalhes técnicos
         logger.debug(f"Erro ao {operation} no Redis: {error}")
 
 
-# Rate limiter simples para iTorrents - mais conservador para evitar 503
 def _rate_limit():
     global _rate_limiter_last_request, _rate_limiter_burst_tokens
     
@@ -86,19 +73,16 @@ def _rate_limit():
         now = time.time()
         elapsed = now - _rate_limiter_last_request
         
-        # Recarrega tokens de burst (1 token a cada intervalo, máximo 2)
         if elapsed >= _rate_limiter_min_interval:
             tokens_to_add = int(elapsed / _rate_limiter_min_interval)
             _rate_limiter_burst_tokens = min(2, _rate_limiter_burst_tokens + tokens_to_add)
         
-        # Se não tem tokens, espera
         if _rate_limiter_burst_tokens <= 0:
             wait_time = _rate_limiter_min_interval - elapsed
             if wait_time > 0:
                 time.sleep(wait_time)
                 now = time.time()
                 elapsed = now - _rate_limiter_last_request
-                # Recarrega após espera
                 if elapsed >= _rate_limiter_min_interval:
                     tokens_to_add = int(elapsed / _rate_limiter_min_interval)
                     _rate_limiter_burst_tokens = min(2, tokens_to_add)
@@ -107,15 +91,12 @@ def _rate_limit():
         _rate_limiter_last_request = now
 
 
-# Cache para evitar logs duplicados de circuit breaker
 _circuit_breaker_log_cache = {}
 _circuit_breaker_log_lock = threading.Lock()
-_CIRCUIT_BREAKER_LOG_COOLDOWN = 30  # Só loga uma vez a cada 30 segundos
-
-# Cache para evitar logs duplicados de cache failure
+_CIRCUIT_BREAKER_LOG_COOLDOWN = 30
 _cache_failure_log_cache = {}
 _cache_failure_log_lock = threading.Lock()
-_CACHE_FAILURE_LOG_COOLDOWN = 60  # Só loga uma vez a cada 60 segundos por hash
+_CACHE_FAILURE_LOG_COOLDOWN = 60
 
 def _is_circuit_breaker_open() -> bool:
     """

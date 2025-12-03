@@ -520,9 +520,7 @@ class LimaoScraper(BaseScraper):
             except Exception:
                 pass
 
-        # Extrai links magnet (podem estar codificados em base64 ou protegidos com protlink)
-        # Busca em div.content, div.entry-content, div.modal-downloads, div#modal-downloads (como no Go)
-        # Também busca links protegidos (systemads/get.php, ?go=, etc.)
+        # Extrai links magnet
         magnet_links = []
         for text_content in doc.select('div.content, div.entry-content, div.modal-downloads, div#modal-downloads'):
             for a in text_content.select('a.customButton, a[href*="encurta"], a[href*="protlink"], a[href^="magnet"], a[href*="get.php"], a[href*="systemads"], a[href*="?go="], a[href*="&go="]'):
