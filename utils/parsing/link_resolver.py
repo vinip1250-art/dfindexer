@@ -7,13 +7,17 @@ import base64
 import html
 import time
 import threading
-from typing import Optional
+from typing import Optional, List
 from urllib.parse import urljoin, urlparse, parse_qs, unquote
 from bs4 import BeautifulSoup
 import requests
+from cache.redis_client import get_redis_client
 from cache.redis_keys import protlink_key
 
 logger = logging.getLogger(__name__)
+
+# Cache em memória por requisição (apenas quando Redis não está disponível)
+_request_cache = threading.local()
 
 # Rate limiting
 _LOCK = threading.Lock()
@@ -23,26 +27,24 @@ _MAX_CONCURRENT_REQUESTS = 5
 _REQUEST_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_REQUESTS)
 
 
-def is_protected_link(href: str) -> bool:
-    """Verifica se um link é protegido e precisa ser resolvido."""
+def is_protected_link(href: str, protected_patterns: Optional[List[str]] = None) -> bool:
+    # Verifica se um link é protegido e precisa ser resolvido (usa padrões padrão se não especificado)
     if not href:
         return False
     
-    protected_patterns = [
-        'protlink=',
-        'encurtador',
-        'encurta',
-        'get.php',
-        'systemads',
-        '?go=',
-        '&go='
-    ]
+    # Padrões padrão (configuráveis)
+    if protected_patterns is None:
+        protected_patterns = [
+            'get.php',
+            '?go=',
+            '&go='
+        ]
     
     return any(pattern in href for pattern in protected_patterns)
 
 
 def decode_ad_link(ad_link: str) -> Optional[str]:
-    """Decodifica link de adware (systemads.org, seuvideo.xyz)."""
+    # Decodifica link de adware (systemads.org, seuvideo.xyz)
     if not ad_link:
         return None
     
@@ -100,26 +102,45 @@ def decode_ad_link(ad_link: str) -> Optional[str]:
 
 
 def resolve_protected_link(protlink_url: str, session: requests.Session, base_url: str = '', redis=None) -> Optional[str]:
-    """Resolve link protegido seguindo redirects e extraindo o magnet link."""
-    if redis:
+    # Resolve link protegido seguindo redirects e extraindo o magnet link (Redis primeiro, memória se Redis não disponível)
+    redis_client = redis or get_redis_client()
+    
+    # Tenta Redis primeiro
+    if redis_client:
         try:
             cache_key = protlink_key(protlink_url)
-            cached = redis.get(cache_key)
+            cached = redis_client.get(cache_key)
             if cached:
                 logger.debug(f"[CACHE REDIS HIT] Link protegido: {protlink_url[:50]}...")
                 return cached.decode('utf-8')
         except Exception:
             pass
     
+    # Usa memória apenas se Redis não está disponível desde o início
+    if not redis_client:
+        if not hasattr(_request_cache, 'protlink_cache'):
+            _request_cache.protlink_cache = {}
+        
+        if protlink_url in _request_cache.protlink_cache:
+            cached_magnet = _request_cache.protlink_cache[protlink_url]
+            logger.debug(f"[CACHE MEMÓRIA HIT] Link protegido: {protlink_url[:50]}...")
+            return cached_magnet
+    
     if 'systemads.org' in protlink_url or 'seuvideo.xyz' in protlink_url or 'get.php' in protlink_url:
         decoded_magnet = decode_ad_link(protlink_url)
         if decoded_magnet:
-            if redis:
+            # Tenta Redis primeiro
+            if redis_client:
                 try:
                     cache_key = protlink_key(protlink_url)
-                    redis.setex(cache_key, 7 * 24 * 3600, decoded_magnet)
+                    redis_client.setex(cache_key, 7 * 24 * 3600, decoded_magnet)
                 except Exception:
                     pass
+            else:
+                # Salva em memória apenas se Redis não disponível
+                if not hasattr(_request_cache, 'protlink_cache'):
+                    _request_cache.protlink_cache = {}
+                _request_cache.protlink_cache[protlink_url] = decoded_magnet
             return decoded_magnet
     
     redirect_count = 0
@@ -195,12 +216,18 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                     location = response.headers.get('Location', '')
                     
                     if location.startswith('magnet:'):
-                        if redis:
+                        # Tenta Redis primeiro
+                        if redis_client:
                             try:
                                 cache_key = protlink_key(protlink_url)
-                                redis.setex(cache_key, 7 * 24 * 3600, location)
+                                redis_client.setex(cache_key, 7 * 24 * 3600, location)
                             except Exception:
                                 pass
+                        else:
+                            # Salva em memória apenas se Redis não disponível
+                            if not hasattr(_request_cache, 'protlink_cache'):
+                                _request_cache.protlink_cache = {}
+                            _request_cache.protlink_cache[protlink_url] = location
                         return location
                     
                     if location:
@@ -293,12 +320,18 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                                 magnet_check = magnet_match.group(0)
                         
                         if magnet_check:
-                            if redis:
+                            # Tenta Redis primeiro
+                            if redis_client:
                                 try:
                                     cache_key = protlink_key(protlink_url)
-                                    redis.setex(cache_key, 7 * 24 * 3600, magnet_check)
+                                    redis_client.setex(cache_key, 7 * 24 * 3600, magnet_check)
                                 except Exception:
                                     pass
+                            else:
+                                # Salva em memória apenas se Redis não disponível
+                                if not hasattr(_request_cache, 'protlink_cache'):
+                                    _request_cache.protlink_cache = {}
+                                _request_cache.protlink_cache[protlink_url] = magnet_check
                             return magnet_check
                         
                         # Verifica se deve seguir redirect
@@ -469,12 +502,18 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                             magnet_link = magnet_match.group(0)
                     
                     if magnet_link:
-                        if redis:
+                        # Tenta Redis primeiro
+                        if redis_client:
                             try:
                                 cache_key = protlink_key(protlink_url)
-                                redis.setex(cache_key, 7 * 24 * 3600, magnet_link)
+                                redis_client.setex(cache_key, 7 * 24 * 3600, magnet_link)
                             except Exception:
                                 pass
+                        else:
+                            # Salva em memória apenas se Redis não disponível
+                            if not hasattr(_request_cache, 'protlink_cache'):
+                                _request_cache.protlink_cache = {}
+                            _request_cache.protlink_cache[protlink_url] = magnet_link
                         return magnet_link
                     else:
                         logger.warning(f"Magnet não encontrado na página final após {redirect_count} redirects.")

@@ -1,21 +1,58 @@
 """Copyright (c) 2025 DFlexy"""
 """https://github.com/DFlexy"""
 
-from typing import List, Dict
+import logging
+from typing import List, Dict, Any
 from datetime import datetime
+from bs4 import Tag, NavigableString
+
+logger = logging.getLogger(__name__)
 
 
 class TorrentProcessor:
     @staticmethod
+    def _sanitize_value(value: Any) -> Any:
+        # Converte valores não serializáveis para tipos serializáveis (Tag do BeautifulSoup para strings)
+        if value is None:
+            return None
+        
+        # Converte objetos Tag do BeautifulSoup para string
+        if isinstance(value, Tag):
+            return value.get_text(strip=True) if hasattr(value, 'get_text') else str(value)
+        
+        # Converte NavigableString para string
+        if isinstance(value, NavigableString):
+            return str(value)
+        
+        # Se for lista, sanitiza cada item
+        if isinstance(value, list):
+            return [TorrentProcessor._sanitize_value(item) for item in value]
+        
+        # Se for dicionário, sanitiza cada valor
+        if isinstance(value, dict):
+            return {k: TorrentProcessor._sanitize_value(v) for k, v in value.items()}
+        
+        return value
+    
+    @staticmethod
+    def sanitize_torrents(torrents: List[Dict]) -> None:
+        # Sanitiza todos os valores dos torrents para garantir serialização JSON
+        for torrent in torrents:
+            for key, value in list(torrent.items()):
+                sanitized = TorrentProcessor._sanitize_value(value)
+                if sanitized != value:
+                    torrent[key] = sanitized
+    
+    @staticmethod
     def remove_internal_fields(torrents: List[Dict]) -> None:
-        """Remove campos internos dos torrents"""
+        # Remove campos internos dos torrents
         for torrent in torrents:
             torrent.pop('_metadata', None)
             torrent.pop('_metadata_fetched', None)
     
     @staticmethod
     def sort_by_date(torrents: List[Dict], reverse: bool = True) -> None:
-        """Ordena torrents por data"""
+        # Ordena torrents por data
         def sort_key(torrent: Dict) -> datetime:
             date_str = torrent.get('date', '')
             if not date_str:

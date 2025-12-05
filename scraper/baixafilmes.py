@@ -22,12 +22,11 @@ from utils.text.text_processing import (
 logger = logging.getLogger(__name__)
 
 
-# Scraper específico para Limao Torrent (filme_torrent)
-class LimaoScraper(BaseScraper):
-    SCRAPER_TYPE = "limao"
-    DEFAULT_BASE_URL = "https://sfilme.com/"
-    #DEFAULT_BASE_URL = "https://tinyurl.com/limonfilmes"
-    DISPLAY_NAME = "Limao"
+# Scraper específico para Baixa Filmes
+class BaixafilmesScraper(BaseScraper):
+    SCRAPER_TYPE = "baixafilmes"
+    DEFAULT_BASE_URL = "https://www.baixafilmestorrent.com.br/"
+    DISPLAY_NAME = "Baixa Filmes"
     
     def __init__(self, base_url: Optional[str] = None, use_flaresolverr: bool = False):
         super().__init__(base_url, use_flaresolverr)
@@ -155,9 +154,9 @@ class LimaoScraper(BaseScraper):
             # Log para info: mostra quantos links foram encontrados e qual o limite
             total_links = len(links)
             if effective_max > 0:
-                logger.info(f"[Limao] Encontrados {total_links} links na página, limitando para {effective_max}")
+                logger.info(f"[Baixa Filmes] Encontrados {total_links} links na página, limitando para {effective_max}")
             else:
-                logger.info(f"[Limao] Encontrados {total_links} links na página (sem limite)")
+                logger.info(f"[Baixa Filmes] Encontrados {total_links} links na página (sem limite)")
             
             # Limita links se houver limite (EMPTY_QUERY_MAX_LINKS limita quantos links processar)
             links = limit_list(links, effective_max)
@@ -189,11 +188,6 @@ class LimaoScraper(BaseScraper):
             self._skip_metadata = False
             self._is_test = False
     
-    # Resolve link protegido (protlink) usando função utilitária compartilhada - retorna URL do magnet link ou None se não conseguir resolver
-    def _resolve_protected_link(self, protlink_url: str) -> Optional[str]:
-        from utils.parsing.link_resolver import resolve_protected_link
-        # Passa Redis para cache de links protegidos resolvidos
-        return resolve_protected_link(protlink_url, self.session, self.base_url, redis=self.redis)
     
     # Extrai torrents de uma página
     def _get_torrents_from_page(self, link: str) -> List[Dict]:
@@ -520,36 +514,42 @@ class LimaoScraper(BaseScraper):
             except Exception:
                 pass
 
-        # Extrai links magnet
+        # Extrai links magnet - busca TODOS os links <a> no conteúdo
+        # A função _resolve_link automaticamente identifica e resolve links protegidos
         magnet_links = []
         for text_content in doc.select('div.content, div.entry-content, div.modal-downloads, div#modal-downloads'):
-            for a in text_content.select('a.customButton, a[href*="encurta"], a[href*="protlink"], a[href^="magnet"], a[href*="get.php"], a[href*="systemads"], a[href*="?go="], a[href*="&go="]'):
+            for a in text_content.select('a[href]'):
                 href = a.get('href', '')
                 if not href:
                     continue
                 
-                # Link direto magnet
-                if href.startswith('magnet:'):
-                    magnet_links.append(href)
-                    continue
-                
-                # Link protegido - resolve usando função utilitária
-                from utils.parsing.link_resolver import is_protected_link
-                if is_protected_link(href):
-                    try:
-                        magnet_link = self._resolve_protected_link(href)
-                        if magnet_link:
-                            # Verifica se o magnet_link resolvido tem trackers (apenas para protlink)
-                            if 'protlink=' in href:
-                                try:
-                                    # Verifica se o link resolvido tem trackers (apenas validação silenciosa)
-                                    MagnetParser.parse(magnet_link)
-                                except Exception:
-                                    pass
-                            magnet_links.append(magnet_link)
-                    except Exception as e:
-                        logger.debug(f"Erro ao resolver link protegido {href}: {e}")
-                        # Continua sem adicionar o link se falhar
+                # Resolve automaticamente (magnet direto ou protegido)
+                resolved_magnet = self._resolve_link(href)
+                if resolved_magnet and resolved_magnet.startswith('magnet:'):
+                    # Verifica se o magnet_link resolvido tem trackers (apenas para protlink original)
+                    original_href = href
+                    if 'protlink=' in original_href:
+                        try:
+                            magnet_data = MagnetParser.parse(resolved_magnet)
+                            trackers = magnet_data.get('trackers', [])
+                            if not trackers:
+                                # Se não tem trackers, adiciona trackers padrão
+                                from tracker.list_provider import TrackerListProvider
+                                tracker_provider = TrackerListProvider(redis_client=self.redis)
+                                default_trackers = tracker_provider.get_trackers()
+                                if default_trackers:
+                                    # Reconstrói magnet com trackers
+                                    from urllib.parse import urlencode
+                                    magnet_params = {
+                                        'xt': f"urn:btih:{magnet_data.get('info_hash', '')}",
+                                        'dn': magnet_data.get('display_name', '')
+                                    }
+                                    for tracker in default_trackers[:5]:  # Limita a 5 trackers
+                                        magnet_params.setdefault('tr', []).append(tracker)
+                                    resolved_magnet = f"magnet:?{urlencode(magnet_params, doseq=True)}"
+                        except Exception:
+                            pass
+                    magnet_links.append(resolved_magnet)
                     continue
                 
                 # Link codificado com token
@@ -676,3 +676,4 @@ class LimaoScraper(BaseScraper):
                 continue
         
         return torrents
+

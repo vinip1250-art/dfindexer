@@ -4,11 +4,15 @@
 import logging
 import json
 import time
+import threading
 from typing import Optional, Dict, Any
 from cache.redis_client import get_redis_client
-from cache.redis_keys import metadata_key
+from cache.redis_keys import metadata_key, metadata_failure_key, metadata_failure503_key
 
 logger = logging.getLogger(__name__)
+
+# Cache em memória por requisição (apenas quando Redis não está disponível)
+_request_cache = threading.local()
 
 
 # Cache para metadata de torrents
@@ -17,60 +21,122 @@ class MetadataCache:
         self.redis = get_redis_client()
     
     def get(self, info_hash: str) -> Optional[Dict[str, Any]]:
-        """Obtém metadata do cache"""
-        if not self.redis:
-            return None
+        # Obtém metadata do cache (Redis primeiro, memória se Redis não disponível)
+        info_hash_lower = info_hash.lower()
         
-        try:
-            key = metadata_key(info_hash)
-            # Chave separada para metadata principal
-            data_str = self.redis.get(key)
-            if data_str:
-                data = json.loads(data_str.decode('utf-8'))
-                return data
-        except Exception:
-            pass
+        # Tenta Redis primeiro
+        if self.redis:
+            try:
+                key = metadata_key(info_hash_lower)
+                data_str = self.redis.get(key)
+                if data_str:
+                    data = json.loads(data_str.decode('utf-8'))
+                    return data
+            except Exception:
+                # Se Redis falhou durante operação, não usa memória
+                return None
+        
+        # Usa memória apenas se Redis não está disponível desde o início
+        if not self.redis:
+            if not hasattr(_request_cache, 'metadata_cache'):
+                _request_cache.metadata_cache = {}
+            
+            return _request_cache.metadata_cache.get(info_hash_lower)
         
         return None
     
     def set(self, info_hash: str, metadata: Dict[str, Any]) -> None:
-        """Salva metadata no cache"""
-        if not self.redis:
-            return
+        # Salva metadata no cache (Redis primeiro, memória se Redis não disponível)
+        info_hash_lower = info_hash.lower()
         
-        try:
-            key = metadata_key(info_hash)
-            # Verifica se já existe no cache antes de salvar
-            exists = self.redis.exists(key)
-            # Chave separada para metadata principal - armazena JSON diretamente
-            metadata_json = json.dumps(metadata, separators=(',', ':'))
-            self.redis.setex(key, 7 * 24 * 3600, metadata_json)  # 7 dias
-            if not exists:
-                size_info = f"size={metadata.get('size', 'N/A')}"
-                name_info = f"name={metadata.get('name', 'N/A')[:50]}" if metadata.get('name') else ""
-                info_parts = [size_info]
-                if name_info:
-                    info_parts.append(name_info)
-                info_str = " | ".join(info_parts)
-                logger.debug(f"[CACHE REDIS SAVE] Metadata salvo: {info_hash[:16]}... (TTL: 604800s | {info_str})")
-            else:
-                logger.debug(f"[CACHE REDIS UPDATE] Metadata atualizado: {info_hash[:16]}...")
-        except Exception:
-            pass  # Ignora erros de cache
+        # Tenta Redis primeiro
+        if self.redis:
+            try:
+                key = metadata_key(info_hash_lower)
+                # Verifica se já existe no cache antes de salvar
+                exists = self.redis.exists(key)
+                # Chave separada para metadata principal - armazena JSON diretamente
+                metadata_json = json.dumps(metadata, separators=(',', ':'))
+                self.redis.setex(key, 7 * 24 * 3600, metadata_json)  # 7 dias
+                if not exists:
+                    size_info = f"size={metadata.get('size', 'N/A')}"
+                    name_info = f"name={metadata.get('name', 'N/A')[:50]}" if metadata.get('name') else ""
+                    info_parts = [size_info]
+                    if name_info:
+                        info_parts.append(name_info)
+                    info_str = " | ".join(info_parts)
+                    logger.debug(f"[CACHE REDIS SAVE] Metadata salvo: {info_hash_lower[:16]}... (TTL: 604800s | {info_str})")
+                else:
+                    logger.debug(f"[CACHE REDIS UPDATE] Metadata atualizado: {info_hash_lower[:16]}...")
+                return
+            except Exception:
+                # Se Redis falhou durante operação, não salva em memória
+                return
+        
+        # Salva em memória apenas se Redis não está disponível desde o início
+        if not self.redis:
+            if not hasattr(_request_cache, 'metadata_cache'):
+                _request_cache.metadata_cache = {}
+            
+            _request_cache.metadata_cache[info_hash_lower] = metadata
     
     def set_failure(self, info_hash: str, ttl: int = 60) -> None:
-        """Marca metadata como falha no cache"""
-        if not self.redis:
-            return
+        # Marca metadata como falha no cache (Redis primeiro, memória se Redis não disponível)
+        info_hash_lower = info_hash.lower()
         
-        try:
-            from cache.redis_keys import metadata_failure_key, metadata_failure503_key
-            # Usa chave específica conforme o tipo de falha
-            if ttl == 300:  # Falha 503
-                key = metadata_failure503_key(info_hash)
-            else:  # Falha normal
-                key = metadata_failure_key(info_hash)
-            self.redis.setex(key, ttl, str(int(time.time())))
-        except Exception:
-            pass  # Ignora erros de cache
+        # Tenta Redis primeiro
+        if self.redis:
+            try:
+                # Usa chave específica conforme o tipo de falha
+                if ttl == 300:  # Falha 503
+                    key = metadata_failure503_key(info_hash_lower)
+                else:  # Falha normal
+                    key = metadata_failure_key(info_hash_lower)
+                self.redis.setex(key, ttl, str(int(time.time())))
+                return
+            except Exception:
+                # Se Redis falhou durante operação, não salva em memória
+                return
+        
+        # Salva em memória apenas se Redis não está disponível desde o início
+        if not self.redis:
+            if not hasattr(_request_cache, 'metadata_failure_cache'):
+                _request_cache.metadata_failure_cache = {}
+            
+            expire_at = time.time() + ttl
+            _request_cache.metadata_failure_cache[info_hash_lower] = expire_at
+    
+    def is_failure_cached(self, info_hash: str) -> bool:
+        # Verifica se metadata está marcada como falha (Redis primeiro, memória se Redis não disponível)
+        info_hash_lower = info_hash.lower()
+        
+        # Tenta Redis primeiro
+        if self.redis:
+            try:
+                # Verifica falha 503 primeiro (TTL maior)
+                failure503_key = metadata_failure503_key(info_hash_lower)
+                if self.redis.exists(failure503_key):
+                    return True
+                
+                # Verifica falha normal
+                failure_key = metadata_failure_key(info_hash_lower)
+                if self.redis.exists(failure_key):
+                    return True
+            except Exception:
+                # Se Redis falhou durante operação, não usa memória
+                return False
+        
+        # Usa memória apenas se Redis não está disponível desde o início
+        if not self.redis:
+            if not hasattr(_request_cache, 'metadata_failure_cache'):
+                return False
+            
+            expire_at = _request_cache.metadata_failure_cache.get(info_hash_lower)
+            if expire_at and time.time() < expire_at:
+                return True
+            elif expire_at:
+                # Expirou, remove
+                del _request_cache.metadata_failure_cache[info_hash_lower]
+        
+        return False
 

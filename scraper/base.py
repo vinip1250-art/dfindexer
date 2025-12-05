@@ -2,6 +2,9 @@
 """https://github.com/DFlexy"""
 
 import logging
+import threading
+import time
+import html
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Callable, Tuple
 from bs4 import BeautifulSoup
@@ -15,6 +18,9 @@ from utils.text.text_processing import format_bytes
 from utils.http.flaresolverr import FlareSolverrClient
 
 logger = logging.getLogger(__name__)
+
+# Cache em memória por requisição (apenas quando Redis não está disponível)
+_request_cache = threading.local()
 
 
 # Classe base para scrapers
@@ -118,6 +124,7 @@ class BaseScraper(ABC):
                         failure_key = f"flaresolverr:failure:{url}"
                         should_retry = True
                         
+                        # Tenta Redis primeiro
                         if self.redis and not self._is_test:
                             try:
                                 if self.redis.exists(failure_key):
@@ -127,6 +134,17 @@ class BaseScraper(ABC):
                                     self.redis.setex(failure_key, 300, "1")
                             except Exception:
                                 pass
+                        # Usa memória apenas se Redis não disponível
+                        elif not self.redis and not self._is_test:
+                            if not hasattr(_request_cache, 'flaresolverr_failures'):
+                                _request_cache.flaresolverr_failures = {}
+                            
+                            expire_at = _request_cache.flaresolverr_failures.get(failure_key, 0)
+                            if time.time() < expire_at:
+                                logger.debug(f"URL {url} já falhou recentemente com FlareSolverr (memória). Pulando retry.")
+                                should_retry = False
+                            else:
+                                _request_cache.flaresolverr_failures[failure_key] = time.time() + 300  # 5 minutos
                         
                         if "%3A" in url or "%3a" in url.lower():
                             logger.debug(f"URL contém dois pontos codificados (%3A). FlareSolverr pode ter problemas. Pulando retry.")
@@ -168,11 +186,17 @@ class BaseScraper(ABC):
                                     
                                     return BeautifulSoup(html_content, 'html.parser')
                                 else:
+                                    # Tenta Redis primeiro
                                     if self.redis and not self._is_test:
                                         try:
                                             self.redis.setex(failure_key, 300, "1")  # 5 minutos
                                         except:
                                             pass
+                                    # Salva em memória apenas se Redis não disponível
+                                    elif not self.redis and not self._is_test:
+                                        if not hasattr(_request_cache, 'flaresolverr_failures'):
+                                            _request_cache.flaresolverr_failures = {}
+                                        _request_cache.flaresolverr_failures[failure_key] = time.time() + 300  # 5 minutos
             except Exception as e:
                 logger.debug(f"Erro ao usar FlareSolverr para {url}: {e}. Tentando requisição direta.")
         
@@ -334,8 +358,40 @@ class BaseScraper(ABC):
         """
         pass
 
+    def _resolve_link(self, href: str) -> Optional[str]:
+        """
+        Resolve automaticamente qualquer link (magnet direto ou protegido).
+        Se for magnet direto, retorna como está. Se for link protegido, resolve via link_resolver.
+        
+        Args:
+            href: URL do link (magnet ou protegido)
+            
+        Returns:
+            URL do magnet link resolvido ou None se não conseguir resolver
+        """
+        if not href:
+            return None
+        
+        # Se já é magnet direto, retorna como está
+        if href.startswith('magnet:'):
+            # Remove entidades HTML comuns
+            href = href.replace('&amp;', '&').replace('&#038;', '&')
+            return html.unescape(href)
+        
+        # Tenta resolver como link protegido
+        try:
+            from utils.parsing.link_resolver import is_protected_link, resolve_protected_link
+            if is_protected_link(href):
+                resolved = resolve_protected_link(href, self.session, self.base_url, redis=self.redis)
+                return resolved
+        except Exception as e:
+            logger.debug(f"Erro ao resolver link {href[:50]}...: {e}")
+        
+        # Se não é magnet e não é protegido, retorna None
+        return None
+    
     def enrich_torrents(self, torrents: List[Dict], skip_metadata: bool = False, skip_trackers: bool = False, filter_func: Optional[Callable[[Dict], bool]] = None) -> List[Dict]:
-        """Preenche dados de seeds/leechers via trackers"""
+        # Preenche dados de seeds/leechers via trackers
         from core.enrichers.torrent_enricher import TorrentEnricher
         from scraper import available_scraper_types
         
@@ -355,7 +411,7 @@ class BaseScraper(ABC):
         return self._enricher.enrich(torrents, skip_metadata, skip_trackers, filter_func, scraper_name=scraper_name)
     
     def _ensure_titles_complete(self, torrents: List[Dict]) -> None:
-        """Garante que os títulos dos torrents estão completos"""
+        # Garante que os títulos dos torrents estão completos
         from magnet.metadata import fetch_metadata_from_itorrents
         
         for torrent in torrents:
@@ -373,7 +429,7 @@ class BaseScraper(ABC):
                         pass
     
     def _fetch_metadata_batch(self, torrents: List[Dict]) -> None:
-        """Busca metadata para todos os torrents de uma vez"""
+        # Busca metadata para todos os torrents de uma vez
         from magnet.metadata import fetch_metadata_from_itorrents
         from magnet.parser import MagnetParser
         torrents_to_fetch = [
@@ -433,7 +489,7 @@ class BaseScraper(ABC):
                     pass
 
     def _apply_size_fallback(self, torrents: List[Dict], skip_metadata: bool = False) -> None:
-        """Aplica fallbacks para obter tamanho do torrent"""
+        # Aplica fallbacks para obter tamanho do torrent
         metadata_enabled = not skip_metadata
         
         for torrent in torrents:
@@ -499,7 +555,7 @@ class BaseScraper(ABC):
                 torrent['size'] = html_size
 
     def _apply_date_fallback(self, torrents: List[Dict], skip_metadata: bool = False) -> None:
-        """Aplica fallback para obter data de criação do torrent"""
+        # Aplica fallback para obter data de criação do torrent
         from datetime import datetime
         
         metadata_enabled = not skip_metadata

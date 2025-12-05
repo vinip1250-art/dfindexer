@@ -328,35 +328,22 @@ class TfilmeScraper(BaseScraper):
                 year = y
             sizes.extend(find_sizes_from_text(text))
         
-        # Extrai links magnet - também busca links protegidos (protlink, encurtador, systemads/get.php, etc.)
+        # Extrai links magnet - busca TODOS os links <a> no conteúdo
+        # A função _resolve_link automaticamente identifica e resolve links protegidos
         text_content = article.find('div', class_='content')
         if not text_content:
             return []
         
         magnet_links = []
-        for magnet in text_content.select('a[href^="magnet:"], a[href*="protlink"], a[href*="encurtador"], a[href*="encurta"], a[href*="get.php"], a[href*="systemads"]'):
-            href = magnet.get('href', '')
+        for link in text_content.select('a[href]'):
+            href = link.get('href', '')
             if not href:
                 continue
             
-            # Link direto magnet
-            if href.startswith('magnet:'):
-                href = href.replace('&#038;', '&').replace('&amp;', '&')
-                unescaped_href = html.unescape(href)
-                if unescaped_href not in magnet_links:
-                    magnet_links.append(unescaped_href)
-            # Link protegido - resolve antes de adicionar
-            else:
-                from utils.parsing.link_resolver import is_protected_link, resolve_protected_link
-                if is_protected_link(href):
-                    try:
-                        resolved_magnet = resolve_protected_link(href, self.session, self.base_url, redis=self.redis)
-                        if resolved_magnet and resolved_magnet not in magnet_links:
-                            magnet_links.append(resolved_magnet)
-                    except Exception as e:
-                        logger.debug(f"Erro ao resolver link protegido {href}: {e}")
-                # Se não for link protegido, ignora (pode ser outro tipo de link)
-                continue
+            # Resolve automaticamente (magnet direto ou protegido)
+            resolved_magnet = self._resolve_link(href)
+            if resolved_magnet and resolved_magnet.startswith('magnet:') and resolved_magnet not in magnet_links:
+                magnet_links.append(resolved_magnet)
         
         if not magnet_links:
             return []

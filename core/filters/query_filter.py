@@ -8,7 +8,7 @@ from utils.text.text_processing import check_query_match
 class QueryFilter:
     @staticmethod
     def create_filter(query: str) -> Callable[[Dict], bool]:
-        """Cria função de filtro baseada na query"""
+        # Cria função de filtro baseada na query
         if not query:
             return lambda t: True
         

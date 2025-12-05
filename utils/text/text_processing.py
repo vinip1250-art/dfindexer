@@ -60,7 +60,7 @@ def clean_title(title: str) -> str:
 
 
 def clean_translated_title(translated_title: str) -> str:
-    """Limpa o título traduzido removendo tags HTML, temporadas, anos e textos extras"""
+    # Limpa o título traduzido removendo tags HTML, temporadas, anos e textos extras
     if not translated_title:
         return ''
     

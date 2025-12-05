@@ -19,7 +19,7 @@ Indexador em Python que organiza torrents brasileiros em formato padronizado, pr
 Python indexer that organizes Brazilian torrents in a standardized format, ready for consumption by tools like **Prowlarr**, **Sonarr** and **Radarr**.
 
 ## 🚀 Características Principais
-- ✅ **Múltiplos Scrapers**: Suporte para 7 sites de torrents brasileiros
+- ✅ **Múltiplos Scrapers**: Suporte para 6 sites de torrents brasileiros
 - ✅ **Padronização Inteligente**: Títulos padronizados para facilitar matching automático
 - ✅ **Metadata API**: Busca automática de tamanhos, datas e nomes via iTorrents.org
 - ✅ **Tracker Scraping**: Consulta automática de trackers UDP para seeds/leechers
@@ -29,7 +29,7 @@ Python indexer that organizes Brazilian torrents in a standardized format, ready
 - ✅ **Otimizações**: Filtragem antes de enriquecimento pesado para melhor performance
 
 ## 🚀 Main Features
-- ✅ **Multiple Scrapers**: Support for 7 Brazilian torrent sites
+- ✅ **Multiple Scrapers**: Support for 6 Brazilian torrent sites
 - ✅ **Smart Standardization**: Standardized titles to facilitate automatic matching
 - ✅ **Metadata API**: Automatic search for sizes, dates and names via iTorrents.org
 - ✅ **Tracker Scraping**: Automatic UDP tracker queries for seeds/leechers
@@ -42,18 +42,16 @@ Python indexer that organizes Brazilian torrents in a standardized format, ready
 ## Sites Suportados
 - ✅ ** st❂rçƙ–f¡lmΞs_v③
 - ✅ ** rεdƎ–tørrΞn†★★
+- ✅ ** bª¡xª–ƒ¡lmεš–tørrεnτ
 - ✅ ** tørrεnτ–đøs–ƒ¡lmεš♡
-- ✅ ** vª¢ª–tørrεnτ–m◎√
-- ✅ ** l¡mªø–tørrεnτ–Ωrg
 - ✅ ** ¢ømªnd◎–łå (Necessário selecionar o FlareSolverr)
 - ✅ ** błµđv–ƒ¡lmεš♡
 
 ## Supported Sites
 - ✅ ** st❂rçƙ–f¡lmΞs_v③
 - ✅ ** rεdƎ–tørrΞn†★★
+- ✅ ** bª¡xª–ƒ¡lmεš–tørrεnτ
 - ✅ ** tørrεnτ–đøs–ƒ¡lmεš♡
-- ✅ ** vª¢ª–tørrεnτ–m◎√
-- ✅ ** l¡mªø–tørrεnτ–Ωrg
 - ✅ ** ¢ømªnd◎–łå (FlareSolverr selection required)
 - ✅ ** błµđv–ƒ¡lmεš♡
 
@@ -82,7 +80,7 @@ docker-compose down -v
 O Docker Compose irá:
 - ✅ Iniciar o serviço Redis automaticamente
 - ✅ Iniciar o serviço FlareSolverr automaticamente (opcional, para resolver Cloudflare)
-- ✅ Usar modo host para rede (containers compartilham rede do host)
+- ✅ Configurar a rede entre os containers
 - ✅ Persistir dados do Redis em volume nomeado
 - ✅ Configurar restart automático
 ### Opção 2: Docker Run CLI
@@ -91,7 +89,7 @@ Se preferir executar manualmente:
 Docker Compose will:
 - ✅ Automatically start the Redis service
 - ✅ Automatically start the FlareSolverr service (optional, to resolve Cloudflare)
-- ✅ Use host network mode (containers share host network)
+- ✅ Configure the network between containers
 - ✅ Persist Redis data in a named volume
 - ✅ Configure automatic restart
 ### Option 2: Docker Run CLI
@@ -101,34 +99,31 @@ If you prefer to run manually:
 ```bash
 # Primeiro, inicie o Redis (dados salvos em ./redis_data)
 docker run -d \
-  --name=dfindexer-redis \
+  --name=redis \
   --restart=unless-stopped \
-  --network host \
+  -p 6379:6379 \
   -v $(pwd)/redis_data:/data \
   redis:7-alpine \
   redis-server --appendonly yes
 
 # Opcional: Inicie o FlareSolverr (para resolver Cloudflare)
 docker run -d \
-  --name=dfindexer-flaresolverr \
+  --name=flaresolverr \
   --restart=unless-stopped \
-  --network host \
+  -p 8191:8191 \
   -e LOG_LEVEL=info \
-  -e TZ=America/Sao_Paulo \
   ghcr.io/flaresolverr/flaresolverr:latest
 
 # Depois, inicie o indexer
 docker run -d \
-  --name=dfindexer \
+  --name=indexer \
   --restart=unless-stopped \
-  --network host \
-  -e REDIS_HOST=localhost \
-  -e REDIS_PORT=6379 \
-  -e FLARESOLVERR_ADDRESS=http://localhost:8191 \
-  -e PORT=7006 \
+  -e REDIS_HOST=redis \
   -e LOG_LEVEL=1 \
-  -e LOG_FORMAT=console \
-  -e TRACKER_SCRAPING_ENABLED=true \
+  -e FLARESOLVERR_ADDRESS=http://flaresolverr:8191 \
+  -p 7006:7006 \
+  --link redis:redis \
+  --link flaresolverr:flaresolverr \
   ghcr.io/dflexy/dfindexer:latest
 ```
 
@@ -216,7 +211,7 @@ The system automatically adds language tags to titles when audio information is 
 | `HTML_CACHE_TTL_LONG`                   | TTL do cache longo de HTML (páginas)                                     | `12h`              |
 | `FLARESOLVERR_SESSION_TTL`              | TTL das sessões FlareSolverr                                              | `4h`               |
 | `EMPTY_QUERY_MAX_LINKS`                 | Limite de links individuais a processar da página 1                      | `15`             |
-| `FLARESOLVERR_ADDRESS`                  | Endereço do servidor FlareSolverr (ex: http://localhost:8191)            | `None` (opcional)  |
+| `FLARESOLVERR_ADDRESS`                  | Endereço do servidor FlareSolverr (ex: http://flaresolverr:8191)         | `None` (opcional)  |
 | `LOG_LEVEL`                             | `0` (debug), `1` (info), `2` (warn), `3` (error)                         | `1`                |
 | `LOG_FORMAT`                            | `console` ou `json`                                                      | `console`          |
 
@@ -232,7 +227,7 @@ The system automatically adds language tags to titles when audio information is 
 | `HTML_CACHE_TTL_LONG`                    | Long HTML cache TTL (pages)                                             | `12h`              |
 | `FLARESOLVERR_SESSION_TTL`               | FlareSolverr session TTL                                                | `4h`               |
 | `EMPTY_QUERY_MAX_LINKS`                  | Limit of individual links to process from page 1                          | `15`             |
-| `FLARESOLVERR_ADDRESS`                   | FlareSolverr server address (ex: http://localhost:8191)                  | `None` (optional)  |
+| `FLARESOLVERR_ADDRESS`                   | FlareSolverr server address (ex: http://flaresolverr:8191)               | `None` (optional)  |
 | `LOG_LEVEL`                              | `0` (debug), `1` (info), `2` (warn), `3` (error)                         | `1`                |
 | `LOG_FORMAT`                             | `console` or `json`                                                      | `console`          |
 

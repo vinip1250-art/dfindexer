@@ -270,42 +270,20 @@ class BludvScraper(BaseScraper):
                                     break
                                 continue
         
-        # Extrai links magnet - busca TODOS os magnets em todo o conteúdo
-        # Também busca links protegidos (protlink, encurtador, systemads/get.php, etc.)
-        # Busca em todo o documento, não apenas em containers específicos
-        all_magnets = doc.select('a[href^="magnet:"], a[href*="protlink"], a[href*="encurtador"], a[href*="encurta"], a[href*="get.php"], a[href*="systemads"]')
-        
-        # Se não encontrou nada, tenta buscar em qualquer link que contenha esses padrões
-        if not all_magnets:
-            all_links = doc.select('a[href]')
-            for link in all_links:
-                href = link.get('href', '')
-                if href and ('get.php' in href or 'systemads' in href or 'protlink' in href or 'encurtador' in href or 'encurta' in href):
-                    all_magnets.append(link)
+        # Extrai links magnet - busca TODOS os links <a> no documento
+        # A função _resolve_link automaticamente identifica e resolve links protegidos
+        all_links = doc.select('a[href]')
         
         magnet_links = []
-        for magnet in all_magnets:
-            href = magnet.get('href', '')
+        for link in all_links:
+            href = link.get('href', '')
             if not href:
                 continue
             
-            # Link direto magnet
-            if href.startswith('magnet:'):
-                unescaped_href = html.unescape(href)
-                if unescaped_href not in magnet_links:
-                    magnet_links.append(unescaped_href)
-            # Link protegido - resolve antes de adicionar
-            else:
-                from utils.parsing.link_resolver import is_protected_link, resolve_protected_link
-                if is_protected_link(href):
-                    try:
-                        resolved_magnet = resolve_protected_link(href, self.session, self.base_url, redis=self.redis)
-                        if resolved_magnet and resolved_magnet not in magnet_links:
-                            magnet_links.append(resolved_magnet)
-                    except Exception as e:
-                        logger.debug(f"Erro ao resolver link protegido {href}: {e}")
-                # Se não for link protegido, ignora (pode ser outro tipo de link)
-                continue
+            # Resolve automaticamente (magnet direto ou protegido)
+            resolved_magnet = self._resolve_link(href)
+            if resolved_magnet and resolved_magnet.startswith('magnet:') and resolved_magnet not in magnet_links:
+                magnet_links.append(resolved_magnet)
         
         if not magnet_links:
             return []
@@ -343,8 +321,13 @@ class BludvScraper(BaseScraper):
                     skip_metadata=self._skip_metadata
                 )
                 
+                # Garante que translated_title seja string (não Tag)
+                translated_title_str = str(translated_title) if translated_title else None
+                if translated_title_str and not isinstance(translated_title_str, str):
+                    translated_title_str = None
+                
                 standardized_title = create_standardized_title(
-                    original_title, year, original_release_title, translated_title_html=translated_title, raw_release_title_magnet=raw_release_title
+                    str(original_title) if original_title else '', year, original_release_title, translated_title_html=translated_title_str, raw_release_title_magnet=raw_release_title
                 )
                 
                 # Adiciona [Brazilian] se detectar DUAL/DUBLADO/NACIONAL, [Eng] se LEGENDADO, ou ambos se houver os dois

@@ -4,6 +4,7 @@
 import logging
 import time
 import uuid
+import threading
 from typing import Optional
 import requests
 from cache.redis_client import get_redis_client
@@ -12,13 +13,15 @@ from app.config import Config
 
 logger = logging.getLogger(__name__)
 
+# Cache em memória por requisição (apenas quando Redis não está disponível)
+_request_cache = threading.local()
+
 
 class FlareSolverrClient:
     def __init__(self, address: str):
         self.address = address.rstrip('/')
         self.api_url = f"{self.address}/v1"
         self.redis = get_redis_client()
-        self._session_cache = {}
     
     def _get_session_key(self, base_url: str) -> str:
         return flaresolverr_session_key(base_url)
@@ -27,6 +30,7 @@ class FlareSolverrClient:
         return flaresolverr_created_key(base_url)
     
     def _create_session(self, base_url: str, skip_redis: bool = False) -> Optional[str]:
+        # Cria nova sessão FlareSolverr (Redis primeiro, memória se Redis não disponível)
         try:
             session_id = f"dfindexer_{uuid.uuid4().hex[:12]}"
             
@@ -47,17 +51,15 @@ class FlareSolverrClient:
             if result.get("status") == "ok":
                 created_session_id = result.get("session")
                 if created_session_id:
-                    session_key = self._get_session_key(base_url)
-                    created_key = self._get_session_created_key(base_url)
-                    
+                    # Tenta Redis primeiro
                     if self.redis and not skip_redis:
                         try:
+                            session_key = self._get_session_key(base_url)
+                            created_key = self._get_session_created_key(base_url)
                             self.redis.setex(session_key, Config.FLARESOLVERR_SESSION_TTL, created_session_id)
                             self.redis.setex(created_key, Config.FLARESOLVERR_SESSION_TTL, str(int(time.time())))
                         except Exception:
                             pass
-                    
-                    self._session_cache[base_url] = created_session_id
                     
                     logger.debug(f"Sessão FlareSolverr criada: {created_session_id} para {base_url}")
                     return created_session_id
@@ -110,23 +112,15 @@ class FlareSolverrClient:
             return True
     
     def get_or_create_session(self, base_url: str, skip_redis: bool = False) -> Optional[str]:
-        if base_url in self._session_cache:
-            session_id = self._session_cache[base_url]
-            if self._validate_session(session_id):
-                return session_id
-            else:
-                del self._session_cache[base_url]
-        
-        session_key = self._get_session_key(base_url)
-        session_id = None
-        
+        # Obtém ou cria sessão FlareSolverr (Redis primeiro, memória se Redis não disponível)
+        # Tenta Redis primeiro
         if self.redis and not skip_redis:
             try:
+                session_key = self._get_session_key(base_url)
                 cached = self.redis.get(session_key)
                 if cached:
                     session_id = cached.decode('utf-8')
                     if self._validate_session(session_id):
-                        self._session_cache[base_url] = session_id
                         logger.debug(f"Sessão FlareSolverr reutilizada: {session_id} para {base_url}")
                         return session_id
                     else:
@@ -135,7 +129,30 @@ class FlareSolverrClient:
             except Exception:
                 pass
         
+        # Usa memória apenas se Redis não está disponível desde o início
+        if not self.redis or skip_redis:
+            if not hasattr(_request_cache, 'flaresolverr_sessions'):
+                _request_cache.flaresolverr_sessions = {}
+            
+            # Verifica cache em memória
+            if base_url in _request_cache.flaresolverr_sessions:
+                session_id, expire_at = _request_cache.flaresolverr_sessions[base_url]
+                if time.time() < expire_at and self._validate_session(session_id):
+                    return session_id
+                else:
+                    # Expirou ou inválida, remove
+                    del _request_cache.flaresolverr_sessions[base_url]
+        
+        # Cria nova sessão
         session_id = self._create_session(base_url, skip_redis)
+        
+        # Salva em memória se Redis não disponível
+        if (not self.redis or skip_redis) and session_id:
+            if not hasattr(_request_cache, 'flaresolverr_sessions'):
+                _request_cache.flaresolverr_sessions = {}
+            expire_at = time.time() + Config.FLARESOLVERR_SESSION_TTL
+            _request_cache.flaresolverr_sessions[base_url] = (session_id, expire_at)
+        
         return session_id
     
     def solve(self, url: str, session_id: str, referer: str = '', base_url: str = '', skip_redis: bool = False) -> Optional[bytes]:
@@ -199,20 +216,23 @@ class FlareSolverrClient:
             return None
     
     def _invalidate_session(self, session_id: str, base_url: str, skip_redis: bool = False):
-        if base_url in self._session_cache:
-            del self._session_cache[base_url]
-        
-        session_key = self._get_session_key(base_url)
-        created_key = self._get_session_created_key(base_url)
-        
+        # Invalida sessão (Redis primeiro, memória se Redis não disponível)
+        # Remove do Redis
         if self.redis and not skip_redis:
             try:
+                session_key = self._get_session_key(base_url)
+                created_key = self._get_session_created_key(base_url)
                 self.redis.delete(session_key)
                 self.redis.delete(created_key)
             except Exception:
                 pass
+        
+        # Remove da memória
+        if hasattr(_request_cache, 'flaresolverr_sessions'):
+            _request_cache.flaresolverr_sessions.pop(base_url, None)
     
     def destroy_session(self, session_id: str, base_url: str):
+        # Destrói sessão FlareSolverr
         try:
             payload = {
                 "cmd": "sessions.destroy",
@@ -228,17 +248,6 @@ class FlareSolverrClient:
         except Exception:
             pass  # Ignora erros ao destruir
         
-        # Remove do cache
-        if base_url in self._session_cache:
-            del self._session_cache[base_url]
-        
-        session_key = self._get_session_key(base_url)
-        created_key = self._get_session_created_key(base_url)
-        
-        if self.redis:
-            try:
-                self.redis.delete(session_key)
-                self.redis.delete(created_key)
-            except Exception:
-                pass
+        # Remove do cache (Redis e memória)
+        self._invalidate_session(session_id, base_url, skip_redis=False)
 

@@ -18,7 +18,7 @@ class TorrentEnricher:
         self._last_filter_stats = None
     
     def enrich(self, torrents: List[Dict], skip_metadata: bool = False, skip_trackers: bool = False, filter_func: Optional[Callable[[Dict], bool]] = None, scraper_name: Optional[str] = None) -> List[Dict]:
-        """Enriquece lista de torrents com metadata e trackers"""
+        # Enriquece lista de torrents com metadata e trackers
         if not torrents:
             return torrents
         
@@ -59,7 +59,7 @@ class TorrentEnricher:
         return torrents
     
     def _remove_duplicates(self, torrents: List[Dict]) -> List[Dict]:
-        """Remove duplicados baseado em info_hash"""
+        # Remove duplicados baseado em info_hash
         seen_hashes = set()
         unique_torrents = []
         for torrent in torrents:
@@ -72,7 +72,7 @@ class TorrentEnricher:
         return unique_torrents
     
     def _ensure_titles_complete(self, torrents: List[Dict]) -> None:
-        """Garante que títulos estão completos"""
+        # Garante que títulos estão completos
         for torrent in torrents:
             title = torrent.get('title', '')
             if not title or len(title.strip()) < 10:
@@ -88,7 +88,7 @@ class TorrentEnricher:
                         pass
     
     def _fetch_metadata_batch(self, torrents: List[Dict]) -> None:
-        """Busca metadata em lote"""
+        # Busca metadata em lote
         from concurrent.futures import ThreadPoolExecutor, as_completed
         
         torrents_to_fetch = [
@@ -144,7 +144,7 @@ class TorrentEnricher:
                     pass
     
     def _apply_size_fallback(self, torrents: List[Dict], skip_metadata: bool = False) -> None:
-        """Aplica fallbacks para tamanho"""
+        # Aplica fallbacks para tamanho
         metadata_enabled = not skip_metadata
         
         for torrent in torrents:
@@ -188,7 +188,7 @@ class TorrentEnricher:
                 torrent['size'] = html_size
     
     def _apply_date_fallback(self, torrents: List[Dict], skip_metadata: bool = False) -> None:
-        """Aplica fallbacks para data"""
+        # Aplica fallbacks para data
         metadata_enabled = not skip_metadata
         
         for torrent in torrents:
@@ -365,7 +365,7 @@ class TorrentEnricher:
                     pass
     
     def _attach_peers(self, torrents: List[Dict]) -> None:
-        """Anexa dados de peers (seeds/leechers) via trackers"""
+        # Anexa dados de peers (seeds/leechers) via trackers
         from utils.parsing.magnet_utils import extract_trackers_from_magnet
         
         # Agrupa por info_hash para usar get_peers_bulk (mais eficiente)

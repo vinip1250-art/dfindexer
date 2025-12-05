@@ -20,14 +20,14 @@ class Torrent:
     imdb: str = ''
     
     def to_dict(self) -> Dict[str, Any]:
-        """Converte o modelo para dicionário"""
+        # Converte o modelo para dicionário
         result = asdict(self)
         # Remove campos vazios opcionais para manter resposta JSON limpa
         return {k: v for k, v in result.items() if v or k in ['seeds', 'leechers']}
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Torrent':
-        """Cria instância a partir de dicionário"""
+        # Cria instância a partir de dicionário
         return cls(
             title=data.get('title', ''),
             magnet=data.get('magnet', ''),

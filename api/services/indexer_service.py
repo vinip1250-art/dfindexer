@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 SCRAPER_NUMBER_MAP = {
     "1": "starck",
     "2": "rede",
-    "3": "limao",
+    "3": "baixafilmes",
     "4": "tfilme",
-    "5": "vaca",
+    "5": None,  # Removido (vaca)
     "6": "comand",
     "7": "bludv",
 }
@@ -32,7 +32,7 @@ class IndexerService:
         self.processor = TorrentProcessor()
     
     def search(self, scraper_type: str, query: str, use_flaresolverr: bool = False, filter_results: bool = False) -> List[Dict]:
-        """Busca torrents por query"""
+        # Busca torrents por query
         scraper = create_scraper(scraper_type, use_flaresolverr=use_flaresolverr)
         
         filter_func = None
@@ -41,17 +41,18 @@ class IndexerService:
         
         torrents = scraper.search(query, filter_func=filter_func)
         
+        self.processor.sanitize_torrents(torrents)
         self.processor.remove_internal_fields(torrents)
         self.processor.sort_by_date(torrents)
         
         return torrents
     
     def get_last_filter_stats(self):
-        """Retorna as estatísticas do último filtro aplicado"""
+        # Retorna as estatísticas do último filtro aplicado
         return self.enricher._last_filter_stats if hasattr(self.enricher, '_last_filter_stats') else None
     
     def get_page(self, scraper_type: str, page: str = '1', use_flaresolverr: bool = False, is_test: bool = False) -> List[Dict]:
-        """Obtém torrents de uma página"""
+        # Obtém torrents de uma página
         scraper = create_scraper(scraper_type, use_flaresolverr=use_flaresolverr)
         
         max_links = None
@@ -63,15 +64,16 @@ class IndexerService:
         if hasattr(scraper, '_enricher') and hasattr(scraper._enricher, '_last_filter_stats'):
             self.enricher._last_filter_stats = scraper._enricher._last_filter_stats
         
+        self.processor.sanitize_torrents(torrents)
         self.processor.remove_internal_fields(torrents)
         
-        if scraper_type != 'vaca' and not (is_test and Config.EMPTY_QUERY_MAX_LINKS > 0):
+        if not (is_test and Config.EMPTY_QUERY_MAX_LINKS > 0):
             self.processor.sort_by_date(torrents)
         
         return torrents
     
     def get_scraper_info(self) -> Dict:
-        """Obtém informações dos scrapers disponíveis"""
+        # Obtém informações dos scrapers disponíveis
         types_info = available_scraper_types()
         sites_dict = {
             scraper_type: meta.get('default_url')
@@ -86,9 +88,13 @@ class IndexerService:
         }
     
     def validate_scraper_type(self, scraper_type: str) -> tuple[bool, Optional[str]]:
-        """Valida tipo de scraper e retorna tipo normalizado"""
+        # Valida tipo de scraper e retorna tipo normalizado
         if scraper_type in SCRAPER_NUMBER_MAP:
-            scraper_type = SCRAPER_NUMBER_MAP[scraper_type]
+            mapped_type = SCRAPER_NUMBER_MAP[scraper_type]
+            # Se o mapeamento for None (scraper removido), retorna inválido
+            if mapped_type is None:
+                return False, None
+            scraper_type = mapped_type
         
         types_info = available_scraper_types()
         normalized_type = normalize_scraper_type(scraper_type)

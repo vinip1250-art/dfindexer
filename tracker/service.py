@@ -82,8 +82,6 @@ class TrackerService:
     ):
         self.redis = redis_client or get_redis_client()
         self.cache_ttl = cache_ttl
-        self._memory_cache: Dict[str, Tuple[float, Tuple[int, int]]] = {}
-        self._cache_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=8)
         self._udp_scraper = UDPScraper(timeout=scrape_timeout, retries=scrape_retries)
         self._list_provider = TrackerListProvider(redis_client=self.redis)
@@ -253,54 +251,26 @@ class TrackerService:
         return tracker_key(info_hash)
 
     def _get_cached(self, info_hash: str) -> Optional[Tuple[int, int]]:
-        key = self._cache_key(info_hash)
-        
-        # Se Redis está disponível, usa apenas Redis
-        if self.redis:
-            try:
-                # Usa Redis Hash para armazenar peers
-                peers_str = self.redis.hget(key, 'peers')
-                if not peers_str:
-                    return None
-                data = json.loads(peers_str.decode("utf-8"))
-                return int(data.get("leech", 0)), int(data.get("seed", 0))
-            except Exception as exc:  # noqa: BLE001
-                _log_redis_error("ler cache de peers", exc)
-                # Se Redis falhou durante operação, retorna None (não usa memória)
-                return None
-        
-        # Usa memória apenas se Redis não está disponível desde o início
-        if not self.redis:
-            now = time.time()
-            with self._cache_lock:
-                memory_value = self._memory_cache.get(key)
-                if memory_value and memory_value[0] > now:
-                    return memory_value[1]
+        # Obtém peers do cache (Redis primeiro, memória se Redis não disponível)
+        try:
+            from cache.tracker_cache import TrackerCache
+            tracker_cache = TrackerCache()
+            cached_data = tracker_cache.get(info_hash)
+            if cached_data:
+                return int(cached_data.get("leech", 0)), int(cached_data.get("seed", 0))
+        except Exception:
+            pass
         
         return None
 
     def _store_cache(self, info_hash: str, peers: Tuple[int, int]) -> None:
-        key = self._cache_key(info_hash)
-        
-        # Se Redis está disponível, salva apenas no Redis
-        if self.redis:
-            try:
-                # Usa Redis Hash para armazenar peers
-                peers_data = json.dumps({"leech": peers[0], "seed": peers[1]}, separators=(',', ':'))
-                self.redis.hset(key, 'peers', peers_data)
-                self.redis.hset(key, 'last_scrape', str(int(time.time())))
-                self.redis.hset(key, 'created', str(int(time.time())))
-                self.redis.expire(key, self.cache_ttl)
-                return
-            except Exception as exc:  # noqa: BLE001
-                _log_redis_error("gravar cache de peers", exc)
-                # Se Redis falhou durante operação, não salva em memória
-                return
-        
-        # Salva em memória apenas se Redis não está disponível desde o início
-        if not self.redis:
-            expires_at = time.time() + self.cache_ttl
-            with self._cache_lock:
-                self._memory_cache[key] = (expires_at, peers)
+        # Salva peers no cache (Redis primeiro, memória se Redis não disponível)
+        try:
+            from cache.tracker_cache import TrackerCache
+            tracker_cache = TrackerCache()
+            tracker_data = {"leech": peers[0], "seed": peers[1]}
+            tracker_cache.set(info_hash, tracker_data)
+        except Exception:
+            pass
 
 
