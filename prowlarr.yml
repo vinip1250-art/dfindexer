@@ -30,6 +30,7 @@ settings:
       "4": Torrent dos Filmes
       "6": Comando Torrents
       "7": Bludv Filmes
+      "8": Nerd Torrent
   
   - name: use_flaresolverr
     type: select

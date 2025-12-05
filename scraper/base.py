@@ -49,6 +49,13 @@ class BaseScraper(ABC):
         self._skip_metadata = False
         self._is_test = False
         
+        # Estatísticas de cache para debug
+        self._cache_stats = {
+            'html': {'hits': 0, 'misses': 0},
+            'metadata': {'hits': 0, 'misses': 0},
+            'trackers': {'hits': 0, 'misses': 0}
+        }
+        
         # Inicializa FlareSolverr se habilitado e configurado
         self.use_flaresolverr = use_flaresolverr and Config.FLARESOLVERR_ADDRESS is not None
         self.flaresolverr_client: Optional[FlareSolverrClient] = None
@@ -65,6 +72,7 @@ class BaseScraper(ABC):
                 cache_key = html_long_key(url)
                 cached = self.redis.get(cache_key)
                 if cached:
+                    self._cache_stats['html']['hits'] += 1
                     return BeautifulSoup(cached, 'html.parser')
             except:
                 pass
@@ -74,9 +82,13 @@ class BaseScraper(ABC):
                 short_cache_key = html_short_key(url)
                 cached = self.redis.get(short_cache_key)
                 if cached:
+                    self._cache_stats['html']['hits'] += 1
                     return BeautifulSoup(cached, 'html.parser')
             except:
                 pass
+        
+        # Cache miss - será buscado do site
+        self._cache_stats['html']['misses'] += 1
         
         html_content = None
         use_flaresolverr_for_this_url = (

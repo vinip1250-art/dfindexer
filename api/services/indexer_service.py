@@ -23,6 +23,7 @@ SCRAPER_NUMBER_MAP = {
     "5": None,  # Removido (vaca)
     "6": "comand",
     "7": "bludv",
+    "8": "nerd",
 }
 
 

@@ -19,7 +19,7 @@ STOP_WORDS = [
 RELEASE_CLEAN_REGEX = re.compile(
     r'(?i)(COMANDO\.TO|COMANDOTORRENTS|WWW\.BLUDV\.TV|BLUDV|WWW\.COMANDOTORRENTS|'
     r'TORRENTBR|BAIXEFILMES|\[EZTVx\.to\]|\[TGx\]|\[rartv\]|\[YTS\.MX\]|'
-    r'TRUFFLE|ETHEL|FLUX|GalaxyRG|WWW\.[A-Z0-9.-]+\.[A-Z]{2,}|\[ACESSE[^\]]*\])\s*-?\s*'
+    r'TRUFFLE|ETHEL|FLUX|GalaxyRG|TOONSHUB|ERAI\.RAWS|WWW\.[A-Z0-9.-]+\.[A-Z]{2,}|\[ACESSE[^\]]*\])\s*-?\s*'
 )
 
 
@@ -1063,8 +1063,8 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
     
     if release_title_magnet:
         release_lower = release_title_magnet.lower()
-        # Detecta português (DUAL, DUBLADO, NACIONAL)
-        if 'dual' in release_lower or 'dublado' in release_lower or 'nacional' in release_lower:
+        # Detecta português (DUAL, DUBLADO, NACIONAL, PORTUGUES, PORTUGUÊS)
+        if 'dual' in release_lower or 'dublado' in release_lower or 'nacional' in release_lower or 'portugues' in release_lower or 'português' in release_lower:
             has_brazilian_audio = True
             # DUAL significa que tem português E inglês
             if 'dual' in release_lower:
@@ -1080,8 +1080,8 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
             metadata = fetch_metadata_from_itorrents(info_hash)
             if metadata and metadata.get('name'):
                 metadata_name = metadata.get('name', '').lower()
-                # Detecta português no metadata
-                if not has_brazilian_audio and ('dual' in metadata_name or 'dublado' in metadata_name or 'nacional' in metadata_name):
+                # Detecta português no metadata (DUAL, DUBLADO, NACIONAL, PORTUGUES, PORTUGUÊS)
+                if not has_brazilian_audio and ('dual' in metadata_name or 'dublado' in metadata_name or 'nacional' in metadata_name or 'portugues' in metadata_name or 'português' in metadata_name):
                     has_brazilian_audio = True
                     # DUAL significa que tem português E inglês
                     if 'dual' in metadata_name:
