@@ -10,6 +10,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from cache.redis_client import get_redis_client
 from cache.redis_keys import tracker_key
+from app.config import Config
 
 from .list_provider import TrackerListProvider
 from .udp_scraper import UDPScraper
@@ -82,10 +83,13 @@ class TrackerService:
     ):
         self.redis = redis_client or get_redis_client()
         self.cache_ttl = cache_ttl
-        self._executor = ThreadPoolExecutor(max_workers=8)
+        # Usa configuração global para workers (padrão: 20 para suportar múltiplos scrapers)
+        max_workers = Config.TRACKER_MAX_WORKERS if hasattr(Config, 'TRACKER_MAX_WORKERS') else 20
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._udp_scraper = UDPScraper(timeout=scrape_timeout, retries=scrape_retries)
         self._list_provider = TrackerListProvider(redis_client=self.redis)
         self.max_trackers = max_trackers
+        logger.debug(f"TrackerService inicializado com {max_workers} workers")
 
     def get_peers(self, info_hash: str, trackers: Iterable[str]) -> Tuple[int, int]:
         result = self.get_peers_bulk({info_hash: list(trackers)})

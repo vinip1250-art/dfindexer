@@ -52,3 +52,8 @@ class Config:
     
     EMPTY_QUERY_MAX_LINKS: int = int(os.getenv('EMPTY_QUERY_MAX_LINKS', '15'))
     
+    # Concorrência
+    TRACKER_MAX_WORKERS: int = int(os.getenv('TRACKER_MAX_WORKERS', '20'))  # Workers globais para trackers
+    METADATA_MAX_CONCURRENT: int = int(os.getenv('METADATA_MAX_CONCURRENT', '32'))  # Limite global de requisições de metadata simultâneas
+    FLARESOLVERR_MAX_SESSIONS: int = int(os.getenv('FLARESOLVERR_MAX_SESSIONS', '15'))  # Limite de sessões FlareSolverr simultâneas
+    

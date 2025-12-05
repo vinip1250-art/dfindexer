@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 # Cache em memória por requisição (apenas quando Redis não está disponível)
 _request_cache = threading.local()
 
+# Controle global de sessões FlareSolverr simultâneas
+_session_creation_lock = threading.Lock()
+_active_sessions_count = 0
+_max_sessions = None
+
 
 class FlareSolverrClient:
     def __init__(self, address: str):
@@ -29,8 +34,57 @@ class FlareSolverrClient:
     def _get_session_created_key(self, base_url: str) -> str:
         return flaresolverr_created_key(base_url)
     
+    # Obtém o limite máximo de sessões FlareSolverr simultâneas
+    def _get_max_sessions(self) -> int:
+        global _max_sessions
+        if _max_sessions is None:
+            _max_sessions = Config.FLARESOLVERR_MAX_SESSIONS if hasattr(Config, 'FLARESOLVERR_MAX_SESSIONS') else 15
+        return _max_sessions
+    
+    # Verifica se pode criar nova sessão (respeitando limite global)
+    def _can_create_session(self) -> bool:
+        global _active_sessions_count, _session_creation_lock
+        with _session_creation_lock:
+            max_sessions = self._get_max_sessions()
+            if _active_sessions_count >= max_sessions:
+                logger.debug(f"Limite de sessões FlareSolverr atingido ({_active_sessions_count}/{max_sessions}). Aguardando...")
+                return False
+            return True
+    
+    # Incrementa contador de sessões ativas
+    def _increment_session_count(self):
+        global _active_sessions_count, _session_creation_lock
+        with _session_creation_lock:
+            _active_sessions_count += 1
+            logger.debug(f"Sessão FlareSolverr criada. Total ativo: {_active_sessions_count}/{self._get_max_sessions()}")
+    
+    # Decrementa contador de sessões ativas
+    def _decrement_session_count(self):
+        global _active_sessions_count, _session_creation_lock
+        with _session_creation_lock:
+            if _active_sessions_count > 0:
+                _active_sessions_count -= 1
+                logger.debug(f"Sessão FlareSolverr removida. Total ativo: {_active_sessions_count}/{self._get_max_sessions()}")
+    
     def _create_session(self, base_url: str, skip_redis: bool = False) -> Optional[str]:
         # Cria nova sessão FlareSolverr (Redis primeiro, memória se Redis não disponível)
+        # Verifica limite global de sessões simultâneas
+        if not self._can_create_session():
+            # Tenta reutilizar sessão existente antes de criar nova
+            if self.redis and not skip_redis:
+                try:
+                    session_key = self._get_session_key(base_url)
+                    cached = self.redis.get(session_key)
+                    if cached:
+                        session_id = cached.decode('utf-8')
+                        if self._validate_session(session_id):
+                            logger.debug(f"Reutilizando sessão existente devido ao limite: {session_id}")
+                            return session_id
+                except Exception:
+                    pass
+            logger.warning(f"Não é possível criar nova sessão FlareSolverr. Limite atingido ({self._get_max_sessions()} sessões).")
+            return None
+        
         try:
             session_id = f"dfindexer_{uuid.uuid4().hex[:12]}"
             
@@ -51,6 +105,9 @@ class FlareSolverrClient:
             if result.get("status") == "ok":
                 created_session_id = result.get("session")
                 if created_session_id:
+                    # Incrementa contador de sessões ativas
+                    self._increment_session_count()
+                    
                     # Tenta Redis primeiro
                     if self.redis and not skip_redis:
                         try:
@@ -113,7 +170,7 @@ class FlareSolverrClient:
     
     def get_or_create_session(self, base_url: str, skip_redis: bool = False) -> Optional[str]:
         # Obtém ou cria sessão FlareSolverr (Redis primeiro, memória se Redis não disponível)
-        # Tenta Redis primeiro
+        # Tenta Redis primeiro (reutiliza sessão existente se disponível)
         if self.redis and not skip_redis:
             try:
                 session_key = self._get_session_key(base_url)
@@ -124,6 +181,7 @@ class FlareSolverrClient:
                         logger.debug(f"Sessão FlareSolverr reutilizada: {session_id} para {base_url}")
                         return session_id
                     else:
+                        # Sessão inválida, remove do cache
                         self.redis.delete(session_key)
                         self.redis.delete(self._get_session_created_key(base_url))
             except Exception:
@@ -143,7 +201,7 @@ class FlareSolverrClient:
                     # Expirou ou inválida, remove
                     del _request_cache.flaresolverr_sessions[base_url]
         
-        # Cria nova sessão
+        # Cria nova sessão (respeitando limite global)
         session_id = self._create_session(base_url, skip_redis)
         
         # Salva em memória se Redis não disponível
@@ -230,6 +288,9 @@ class FlareSolverrClient:
         # Remove da memória
         if hasattr(_request_cache, 'flaresolverr_sessions'):
             _request_cache.flaresolverr_sessions.pop(base_url, None)
+        
+        # Decrementa contador de sessões ativas
+        self._decrement_session_count()
     
     def destroy_session(self, session_id: str, base_url: str):
         # Destrói sessão FlareSolverr

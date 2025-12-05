@@ -319,9 +319,6 @@ class BaseScraper(ABC):
             self._skip_metadata = False
     
     def _default_search(self, query: str, filter_func: Optional[Callable[[Dict], bool]] = None) -> List[Dict]:
-        """
-        Implementação padrão de search que pode ser reutilizada pelos scrapers.
-        """
         from utils.concurrency.scraper_helpers import normalize_query_for_flaresolverr
         query = normalize_query_for_flaresolverr(query, self.use_flaresolverr)
         links = self._search_variations(query)
@@ -429,9 +426,11 @@ class BaseScraper(ABC):
                         pass
     
     def _fetch_metadata_batch(self, torrents: List[Dict]) -> None:
-        # Busca metadata para todos os torrents de uma vez
+        # Busca metadata para todos os torrents de uma vez com semáforo global
         from magnet.metadata import fetch_metadata_from_itorrents
         from magnet.parser import MagnetParser
+        from utils.concurrency.metadata_semaphore import acquire_metadata_slot, release_metadata_slot
+        
         torrents_to_fetch = [
             t for t in torrents
             if not t.get('_metadata_fetched') and t.get('magnet_link')
@@ -441,6 +440,8 @@ class BaseScraper(ABC):
             return
         
         def fetch_metadata_for_torrent(torrent: Dict) -> tuple:
+            # Adquire slot no semáforo global antes de fazer requisição
+            acquire_metadata_slot()
             try:
                 # Obtém info_hash
                 info_hash = torrent.get('info_hash')
@@ -458,10 +459,14 @@ class BaseScraper(ABC):
                 return (torrent, metadata)
             except Exception:
                 return (torrent, None)
+            finally:
+                # Sempre libera o slot, mesmo em caso de erro
+                release_metadata_slot()
         
         if len(torrents_to_fetch) > 1:
             from concurrent.futures import ThreadPoolExecutor, as_completed
             
+            # Limita workers locais, mas o semáforo global controla requisições simultâneas
             max_workers = min(8, len(torrents_to_fetch))
             
             with ThreadPoolExecutor(max_workers=max_workers) as executor:

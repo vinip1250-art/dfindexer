@@ -88,8 +88,9 @@ class TorrentEnricher:
                         pass
     
     def _fetch_metadata_batch(self, torrents: List[Dict]) -> None:
-        # Busca metadata em lote
+        # Busca metadata em lote com semáforo global para limitar requisições simultâneas
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        from utils.concurrency.metadata_semaphore import acquire_metadata_slot, release_metadata_slot
         
         torrents_to_fetch = [
             t for t in torrents
@@ -100,6 +101,8 @@ class TorrentEnricher:
             return
         
         def fetch_metadata_for_torrent(torrent: Dict) -> tuple:
+            # Adquire slot no semáforo global antes de fazer requisição
+            acquire_metadata_slot()
             try:
                 info_hash = torrent.get('info_hash')
                 if not info_hash:
@@ -116,8 +119,12 @@ class TorrentEnricher:
                 return (torrent, metadata)
             except Exception:
                 return (torrent, None)
+            finally:
+                # Sempre libera o slot, mesmo em caso de erro
+                release_metadata_slot()
         
         if len(torrents_to_fetch) > 1:
+            # Limita workers locais, mas o semáforo global controla requisições simultâneas
             max_workers = min(8, len(torrents_to_fetch))
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_torrent = {

@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from flask import jsonify, request
 from app.config import Config
-from api.services.indexer_service import IndexerService
+from api.services.indexer_service import IndexerService, SCRAPER_NUMBER_MAP
 from scraper import available_scraper_types
 
 logger = logging.getLogger(__name__)
@@ -63,14 +63,24 @@ def indexer_handler(site_name: str = None):
         if site_name:
             is_valid, normalized_type = _indexer_service.validate_scraper_type(site_name)
             if not is_valid:
-                return jsonify({
-                    'error': (
-                        f'Scraper "{site_name}" não configurado. '
-                        f'Tipos disponíveis: {available_types}'
-                    ),
-                    'results': [],
-                    'count': 0
-                }), 404
+                # Verifica se é um ID removido (None no mapeamento)
+                # Para IDs removidos, retorna resposta vazia (200) em vez de 404
+                # Isso evita que o Prowlarr marque o indexer como indisponível
+                if site_name in SCRAPER_NUMBER_MAP and SCRAPER_NUMBER_MAP[site_name] is None:
+                    logger.warning(f"Tentativa de usar scraper ID removido: {site_name}")
+                    return jsonify({
+                        'results': [],
+                        'count': 0
+                    }), 200
+                else:
+                    return jsonify({
+                        'error': (
+                            f'Scraper "{site_name}" não configurado. '
+                            f'Tipos disponíveis: {available_types}'
+                        ),
+                        'results': [],
+                        'count': 0
+                    }), 404
             display_label = types_info[normalized_type].get('display_name', site_name)
         else:
             normalized_type = available_types[0] if available_types else ''
@@ -84,11 +94,10 @@ def indexer_handler(site_name: str = None):
         is_prowlarr_test = not query
         
         if query:
-            torrents = _indexer_service.search(normalized_type, query, use_flaresolverr, filter_results)
+            torrents, filter_stats = _indexer_service.search(normalized_type, query, use_flaresolverr, filter_results)
         else:
-            torrents = _indexer_service.get_page(normalized_type, page, use_flaresolverr, is_prowlarr_test)
+            torrents, filter_stats = _indexer_service.get_page(normalized_type, page, use_flaresolverr, is_prowlarr_test)
         
-        filter_stats = _indexer_service.get_last_filter_stats()
         if filter_stats:
             logger.info(f"{log_prefix} [Filtro Aplicado] Total: {filter_stats['total']} | Filtrados: {filter_stats['filtered']} | Aprovados: {filter_stats['approved']}")
         else:

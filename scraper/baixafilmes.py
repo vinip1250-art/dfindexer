@@ -191,7 +191,9 @@ class BaixafilmesScraper(BaseScraper):
     
     # Extrai torrents de uma página
     def _get_torrents_from_page(self, link: str) -> List[Dict]:
-        doc = self.get_document(link, self.base_url)
+        # Garante que o link seja absoluto para o campo details
+        absolute_link = urljoin(self.base_url, link) if link and not link.startswith('http') else link
+        doc = self.get_document(absolute_link, self.base_url)
         if not doc:
             return []
         
@@ -656,7 +658,7 @@ class BaixafilmesScraper(BaseScraper):
                     'title': final_title,
                     'original_title': original_title if original_title else title,
                     'translated_title': translated_title if translated_title else None,
-                    'details': link,
+                    'details': absolute_link,
                     'year': year,
                     'imdb': imdb,
                     'audio': [],

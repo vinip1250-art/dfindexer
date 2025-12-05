@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 from utils.parsing.date_parser import parse_date_from_string
 from typing import List, Dict, Optional, Callable
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
@@ -107,7 +107,9 @@ class StarckScraper(BaseScraper):
     
     # Extrai torrents de uma página
     def _get_torrents_from_page(self, link: str) -> List[Dict]:
-        doc = self.get_document(link, self.base_url)
+        # Garante que o link seja absoluto para o campo details
+        absolute_link = urljoin(self.base_url, link) if link and not link.startswith('http') else link
+        doc = self.get_document(absolute_link, self.base_url)
         if not doc:
             return []
         
@@ -251,7 +253,7 @@ class StarckScraper(BaseScraper):
                     'title': final_title,
                     'original_title': original_title if original_title else page_title,  # Usa nome original se disponível
                     'translated_title': translated_title if translated_title else None,
-                    'details': link,
+                    'details': absolute_link,
                     'year': year,
                     'imdb': imdb,
                     'audio': [],

@@ -6,7 +6,7 @@ import re
 import logging
 from datetime import datetime
 from typing import List, Dict, Optional, Callable
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urljoin
 from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
@@ -82,7 +82,9 @@ class ComandScraper(BaseScraper):
                 if link_elem:
                     href = link_elem.get('href')
                     if href:
-                        links.append(href)
+                        # Converte URL relativa para absoluta
+                        absolute_url = urljoin(self.base_url, href)
+                        links.append(absolute_url)
         
         return links
     
@@ -119,7 +121,9 @@ class ComandScraper(BaseScraper):
                 if link_elem:
                     href = link_elem.get('href')
                     if href:
-                        links.append(href)
+                        # Converte URL relativa para absoluta
+                        absolute_url = urljoin(self.base_url, href)
+                        links.append(absolute_url)
             
             # Se não encontrou com seletor específico, tenta alternativo
             if not links:
@@ -134,7 +138,10 @@ class ComandScraper(BaseScraper):
     
     # Extrai torrents de uma página
     def _get_torrents_from_page(self, link: str) -> List[Dict]:
-        doc = self.get_document(link, self.base_url)
+        # Garante que o link seja absoluto para o campo details
+        from urllib.parse import urljoin
+        absolute_link = urljoin(self.base_url, link) if link and not link.startswith('http') else link
+        doc = self.get_document(absolute_link, self.base_url)
         if not doc:
             return []
         
@@ -474,7 +481,7 @@ class ComandScraper(BaseScraper):
                     'title': final_title,
                     'original_title': original_title if original_title else page_title,
                     'translated_title': translated_title if translated_title else None,
-                    'details': link,
+                    'details': absolute_link,
                     'year': year,
                     'imdb': imdb,
                     'audio': [],

@@ -99,13 +99,12 @@ def clean_translated_title(translated_title: str) -> str:
     # Remove anos soltos no final (ex: "2025")
     translated_title = re.sub(r'\s+(19|20)\d{2}\s*$', '', translated_title)
     
-    # Remove textos extras específicos do Vaca Torrent
-    # Remove padrões como "2025 — Vaca Torrent – Baixe Filmes e Séries"
-    translated_title = re.sub(r'(?i)\s*—\s*Vaca\s+Torrent\s*–\s*Baixe\s+Filmes\s+e\s+S[ée]ries\s*$', '', translated_title)
-    translated_title = re.sub(r'(?i)\s*—\s*[^—]+$', '', translated_title)  # Remove "— Vaca Torrent – Baixe..."
+    # Remove textos extras de sites (padrões genéricos)
+    # Remove padrões como "2025 — Site Torrent – Baixe Filmes e Séries"
+    translated_title = re.sub(r'(?i)\s*—\s*[^—]+Torrent\s*–\s*Baixe\s+Filmes\s+e\s+S[ée]ries\s*$', '', translated_title)
+    translated_title = re.sub(r'(?i)\s*—\s*[^—]+$', '', translated_title)  # Remove "— Site Torrent – Baixe..."
     translated_title = re.sub(r'(?i)\s*–\s*[^–]+$', '', translated_title)  # Remove "– Baixe Filmes..."
     translated_title = re.sub(r'(?i)\s*Baixe\s+Filmes\s+e\s+S[ée]ries\s*', '', translated_title)
-    translated_title = re.sub(r'(?i)\s*Vaca\s+Torrent\s*', '', translated_title)
     
     # Remove caracteres especiais do final
     translated_title = translated_title.rstrip(' .,:;—–-')
