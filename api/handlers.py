@@ -115,7 +115,9 @@ def indexer_handler(site_name: str = None):
     
     except Exception as e:
         site_info = f"[{display_label}]" if 'display_label' in locals() else "[UNKNOWN]"
-        logger.error(f"{site_info} Erro no handler indexer: {e}", exc_info=True)
+        error_type = type(e).__name__
+        error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
+        logger.error(f"{site_info} Handler error: {error_type} - {error_msg}", exc_info=True)
         return jsonify({
             'error': str(e),
             'results': [],

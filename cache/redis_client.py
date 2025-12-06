@@ -3,15 +3,23 @@
 
 import logging
 import redis
+import time
 from typing import Optional
 from app.config import Config
 logger = logging.getLogger(__name__)
 
 _redis_client: Optional[redis.Redis] = None
+_last_warning_log = 0.0
+_WARNING_LOG_COOLDOWN = 60  # Só loga warning uma vez por minuto
 
 
 def init_redis():
-    global _redis_client
+    global _redis_client, _last_warning_log
+    # Se REDIS_HOST não está configurado, retorna sem logar (bootstrap.log faz isso)
+    if not Config.REDIS_HOST or Config.REDIS_HOST.strip() == '':
+        _redis_client = None
+        return
+    
     try:
         _redis_client = redis.Redis(
             host=Config.REDIS_HOST,
@@ -22,9 +30,12 @@ def init_redis():
             socket_timeout=2
         )
         _redis_client.ping()
-        logger.info("[[ Redis Conectado ]]")
-    except Exception:
+        # Não loga aqui - bootstrap.log faz isso
+        _last_warning_log = 0.0  # Reset cooldown quando conectar
+    except Exception as e:
         _redis_client = None
+        # Não loga aqui - bootstrap.log faz isso
+        pass
 
 
 def get_redis_client() -> Optional[redis.Redis]:

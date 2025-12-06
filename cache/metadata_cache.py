@@ -58,16 +58,7 @@ class MetadataCache:
                 # Chave separada para metadata principal - armazena JSON diretamente
                 metadata_json = json.dumps(metadata, separators=(',', ':'))
                 self.redis.setex(key, 7 * 24 * 3600, metadata_json)  # 7 dias
-                if not exists:
-                    size_info = f"size={metadata.get('size', 'N/A')}"
-                    name_info = f"name={metadata.get('name', 'N/A')[:50]}" if metadata.get('name') else ""
-                    info_parts = [size_info]
-                    if name_info:
-                        info_parts.append(name_info)
-                    info_str = " | ".join(info_parts)
-                    logger.debug(f"[CACHE REDIS SAVE] Metadata salvo: {info_hash_lower[:16]}... (TTL: 604800s | {info_str})")
-                else:
-                    logger.debug(f"[CACHE REDIS UPDATE] Metadata atualizado: {info_hash_lower[:16]}...")
+                # Metadata salvo/atualizado no cache
                 return
             except Exception:
                 # Se Redis falhou durante operação, não salva em memória

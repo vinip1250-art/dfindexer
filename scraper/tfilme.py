@@ -137,7 +137,6 @@ class TfilmeScraper(BaseScraper):
             else:
                 # Sem limite, combina todos os links
                 links = filmes_links + series_links
-                logger.debug(f"[TFilme] Sem limite - Coletando {len(filmes_links)} filmes e {len(series_links)} séries")
             
             # Quando há limite configurado, processa sequencialmente para manter ordem original
             # Caso contrário, processa em paralelo para melhor performance
@@ -504,7 +503,11 @@ class TfilmeScraper(BaseScraper):
                 torrents.append(torrent)
             
             except Exception as e:
-                logger.error(f"Erro ao processar magnet {link}: {e}")
+                error_type = type(e).__name__
+                error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
+                link_str = str(magnet_link) if magnet_link else 'N/A'
+                link_preview = link_str[:50] if link_str != 'N/A' else 'N/A'
+                logger.error(f"Magnet error: {error_type} - {error_msg} (link: {link_preview}...)")
                 continue
         
         return torrents

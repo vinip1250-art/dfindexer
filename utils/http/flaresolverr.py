@@ -47,7 +47,7 @@ class FlareSolverrClient:
         with _session_creation_lock:
             max_sessions = self._get_max_sessions()
             if _active_sessions_count >= max_sessions:
-                logger.debug(f"Limite de sessões FlareSolverr atingido ({_active_sessions_count}/{max_sessions}). Aguardando...")
+                logger.debug(f"FlareSolverr: limite atingido ({_active_sessions_count}/{max_sessions})")
                 return False
             return True
     
@@ -56,7 +56,7 @@ class FlareSolverrClient:
         global _active_sessions_count, _session_creation_lock
         with _session_creation_lock:
             _active_sessions_count += 1
-            logger.debug(f"Sessão FlareSolverr criada. Total ativo: {_active_sessions_count}/{self._get_max_sessions()}")
+            logger.debug(f"FlareSolverr: sessão criada ({_active_sessions_count}/{self._get_max_sessions()})")
     
     # Decrementa contador de sessões ativas
     def _decrement_session_count(self):
@@ -64,7 +64,7 @@ class FlareSolverrClient:
         with _session_creation_lock:
             if _active_sessions_count > 0:
                 _active_sessions_count -= 1
-                logger.debug(f"Sessão FlareSolverr removida. Total ativo: {_active_sessions_count}/{self._get_max_sessions()}")
+                logger.debug(f"FlareSolverr: sessão removida ({_active_sessions_count}/{self._get_max_sessions()})")
     
     def _create_session(self, base_url: str, skip_redis: bool = False) -> Optional[str]:
         # Cria nova sessão FlareSolverr (Redis primeiro, memória se Redis não disponível)
@@ -78,7 +78,7 @@ class FlareSolverrClient:
                     if cached:
                         session_id = cached.decode('utf-8')
                         if self._validate_session(session_id):
-                            logger.debug(f"Reutilizando sessão existente devido ao limite: {session_id}")
+                            logger.debug(f"FlareSolverr: reutilizando sessão (limite)")
                             return session_id
                 except Exception:
                     pass
@@ -118,7 +118,7 @@ class FlareSolverrClient:
                         except Exception:
                             pass
                     
-                    logger.debug(f"Sessão FlareSolverr criada: {created_session_id} para {base_url}")
+                    logger.debug(f"FlareSolverr: sessão criada para {base_url}")
                     return created_session_id
             
             logger.warning(f"Falha ao criar sessão FlareSolverr: {result}")
@@ -178,7 +178,7 @@ class FlareSolverrClient:
                 if cached:
                     session_id = cached.decode('utf-8')
                     if self._validate_session(session_id):
-                        logger.debug(f"Sessão FlareSolverr reutilizada: {session_id} para {base_url}")
+                        logger.debug(f"FlareSolverr: sessão reutilizada para {base_url}")
                         return session_id
                     else:
                         # Sessão inválida, remove do cache

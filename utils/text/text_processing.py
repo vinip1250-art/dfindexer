@@ -137,10 +137,9 @@ def get_release_title_from_redis(info_hash: str) -> Optional[str]:
         if cached:
             release_title = cached.decode('utf-8').strip()
             if release_title and len(release_title) >= 3:
-                logger.debug(f"[REDIS RELEASE_TITLE] Encontrado para {info_hash[:16]}...: {release_title[:50]}")
                 return release_title
-    except Exception as e:
-        logger.debug(f"[REDIS RELEASE_TITLE] Erro ao buscar: {e}")
+    except Exception:
+        pass
     
     return None
 
@@ -166,9 +165,8 @@ def save_release_title_to_redis(info_hash: str, release_title: str) -> None:
         key = release_title_key(info_hash)
         # Salva por 7 dias (mesmo TTL do metadata)
         redis.setex(key, 7 * 24 * 3600, release_title.strip())
-        logger.debug(f"[REDIS RELEASE_TITLE] Salvo para {info_hash[:16]}...: {release_title[:50]}")
-    except Exception as e:
-        logger.debug(f"[REDIS RELEASE_TITLE] Erro ao salvar: {e}")
+    except Exception:
+        pass
 
 
 def get_metadata_name(info_hash: str, skip_metadata: bool = False) -> Optional[str]:
@@ -1259,7 +1257,28 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
     if has_legendado and not has_leg:
         tags_to_add.append('[Leg]')
     
+    # Remove DUAL, DUBLADO, LEGENDADO do título se as tags correspondentes foram adicionadas
+    # (não precisa manter no título se a tag já indica o tipo de áudio)
     if tags_to_add:
+        # Remove DUAL se [Brazilian] ou [Eng] foi adicionado
+        if '[Brazilian]' in tags_to_add or '[Eng]' in tags_to_add:
+            # Remove DUAL (case insensitive, com pontos antes/depois)
+            title = re.sub(r'\.?\.?DUAL\.?\.?', '.', title, flags=re.IGNORECASE)
+            title = re.sub(r'\.{2,}', '.', title)  # Remove pontos duplicados
+            title = title.strip('.')
+        # Remove DUBLADO se [Brazilian] foi adicionado
+        if '[Brazilian]' in tags_to_add:
+            title = re.sub(r'\.?\.?DUBLADO\.?\.?', '.', title, flags=re.IGNORECASE)
+            title = re.sub(r'\.{2,}', '.', title)
+            title = title.strip('.')
+        # Remove LEGENDADO se [Leg] foi adicionado
+        if '[Leg]' in tags_to_add:
+            title = re.sub(r'\.?\.?LEGENDADO\.?\.?', '.', title, flags=re.IGNORECASE)
+            title = re.sub(r'\.?\.?LEGENDA\.?\.?', '.', title, flags=re.IGNORECASE)
+            title = re.sub(r'\.?\.?LEG\.?\.?', '.', title, flags=re.IGNORECASE)
+            title = re.sub(r'\.{2,}', '.', title)
+            title = title.strip('.')
+        
         title = title.rstrip()
         title = f"{title} {' '.join(tags_to_add)}"
 
@@ -1305,6 +1324,14 @@ def check_query_match(query: str, title: str, original_title_html: str = '', tra
         # Verifica match como palavra completa usando regex com word boundaries
         pattern = r'\b' + re.escape(query_word_no_accent) + r'\b'
         if re.search(pattern, combined_title, re.IGNORECASE):
+            matches += 1
+            continue
+        
+        # Se não encontrou como palavra completa, tenta match parcial no início de palavras
+        # Isso resolve casos como "Ranma" encontrando "Ranma12" ou "Ranma1/2"
+        # Usa lookahead para garantir que é o início de uma palavra (seguido de letra/número)
+        partial_pattern = r'\b' + re.escape(query_word_no_accent) + r'(?=[a-zA-Z0-9])'
+        if re.search(partial_pattern, combined_title, re.IGNORECASE):
             matches += 1
             continue
 

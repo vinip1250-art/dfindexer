@@ -35,9 +35,9 @@ def _is_redis_connection_error(error: Exception) -> bool:
 
 def _log_redis_error(operation: str, error: Exception) -> None:
     if _is_redis_connection_error(error):
-        logger.debug(f"Redis indisponível - {operation} usando fallback em memória")
+        logger.debug(f"Redis fallback: {operation}")
     else:
-        logger.debug(f"Erro ao {operation} no Redis: {error}")
+        logger.debug(f"Redis error: {operation}")
 
 
 def _sanitize_tracker(url: str) -> Optional[str]:
@@ -89,7 +89,6 @@ class TrackerService:
         self._udp_scraper = UDPScraper(timeout=scrape_timeout, retries=scrape_retries)
         self._list_provider = TrackerListProvider(redis_client=self.redis)
         self.max_trackers = max_trackers
-        logger.debug(f"TrackerService inicializado com {max_workers} workers")
 
     def get_peers(self, info_hash: str, trackers: Iterable[str]) -> Tuple[int, int]:
         result = self.get_peers_bulk({info_hash: list(trackers)})
@@ -144,7 +143,7 @@ class TrackerService:
         try:
             info_hash_bytes = bytes.fromhex(info_hash)
         except ValueError:
-            logger.debug("info_hash inválido para scrape: %s", info_hash)
+            logger.debug("Invalid info_hash: %s", info_hash[:16])
             return None
 
         provided_trackers = [
@@ -175,13 +174,7 @@ class TrackerService:
                 if peers:
                     leechers, seeders = peers
                     if seeders or leechers:
-                        logger.debug(
-                            "Peers obtidos via tracker %s para %s (S:%d L:%d).",
-                            tracker,
-                            info_hash,
-                            seeders,
-                            leechers,
-                        )
+                        logger.debug("Tracker %s: %s (S:%d L:%d)", tracker, info_hash[:16], seeders, leechers)
                         return leechers, seeders
                     if best is None:
                         best = (leechers, seeders)
@@ -207,30 +200,19 @@ class TrackerService:
                     # Agrupa erros de DNS - só loga uma vez por tracker
                     if tracker not in dns_errors:
                         dns_errors[tracker] = True
-                        logger.debug(
-                            "Tracker %s indisponível (erro de DNS)",
-                            tracker
-                        )
+                        logger.debug("Tracker %s: DNS error", tracker)
                     # Não loga cada info_hash individualmente para erros de DNS
                 elif is_timeout_error:
                     # Agrupa erros de timeout - só loga uma vez por tracker
                     if tracker not in timeout_errors:
                         timeout_errors[tracker] = True
-                        logger.debug(
-                            "Tracker %s indisponível (timeout)",
-                            tracker
-                        )
+                        logger.debug("Tracker %s: timeout", tracker)
                     # Não loga cada info_hash individualmente para erros de timeout
                 else:
                     # Outros erros são logados normalmente (mas de forma mais resumida)
                     error_type = type(exc).__name__
                     short_msg = error_msg.split('\n')[0][:100]  # Primeira linha, máximo 100 chars
-                    logger.debug(
-                        "Tracker %s não respondeu (%s): %s",
-                        tracker,
-                        error_type,
-                        short_msg
-                    )
+                    logger.debug("Tracker %s: %s - %s", tracker, error_type, short_msg[:50])
 
         if best:
             return best

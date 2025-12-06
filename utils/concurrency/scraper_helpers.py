@@ -101,7 +101,6 @@ def process_links_parallel(
     # Log se houver duplicatas removidas
     if len(links) != len(unique_links):
         duplicates_count = len(links) - len(unique_links)
-        logger.debug(f"Removidas {duplicates_count} URLs duplicadas da lista de processamento")
     
     links = unique_links
     all_torrents = []
@@ -129,7 +128,10 @@ def process_links_parallel(
                             f.cancel()
                         break
                 except Exception as e:
-                    logger.warning(f"Erro ao processar página {link}: {e}")
+                    error_type = type(e).__name__
+                    error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
+                    link_preview = link[:50] if link else 'N/A'
+                    logger.warning(f"Page error: {error_type} - {error_msg} (link: {link_preview}...)")
     else:
         # Processa sequencialmente se houver apenas 1 link
         for link in links:
@@ -159,7 +161,6 @@ def process_links_sequential(
     # Log se houver duplicatas removidas
     if len(links) != len(unique_links):
         duplicates_count = len(links) - len(unique_links)
-        logger.debug(f"Removidas {duplicates_count} URLs duplicadas da lista de processamento")
     
     links = unique_links
     all_torrents = []

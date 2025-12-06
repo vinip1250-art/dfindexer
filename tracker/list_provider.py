@@ -43,9 +43,9 @@ def _is_redis_connection_error(error: Exception) -> bool:
 # Loga erros do Redis de forma mais amigável
 def _log_redis_error(operation: str, error: Exception) -> None:
     if _is_redis_connection_error(error):
-        logger.debug(f"Redis indisponível - {operation} usando fallback em memória")
+        logger.debug(f"Redis fallback: {operation}")
     else:
-        logger.debug(f"Erro ao {operation} no Redis: {error}")
+        logger.debug(f"Redis error: {operation}")
 
 # Circuit breaker para evitar consultas quando há muitos timeouts
 _CIRCUIT_BREAKER_KEY = circuit_tracker_key()
@@ -53,9 +53,9 @@ _CIRCUIT_BREAKER_TIMEOUT_THRESHOLD = 3  # Número de timeouts consecutivos antes
 _CIRCUIT_BREAKER_DISABLE_DURATION = 60  # 1 minuto de desabilitação após muitos timeouts
 
 _TRACKER_SOURCES = [
-    "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best_ip.txt",
-    "https://cdn.jsdelivr.net/gh/ngosang/trackerslist@master/trackers_best_ip.txt",
-    "https://ngosang.github.io/trackerslist/trackers_best_ip.txt",
+    "https://ngosang.github.io/trackerslist/trackers_all_ip.txt",  # Primeira opção
+    "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best_ip.txt",  # Fallback 1
+    "https://cdn.jsdelivr.net/gh/ngosang/trackerslist@master/trackers_best_ip.txt",  # Fallback 2
 ]
 
 
@@ -89,7 +89,7 @@ def _is_circuit_breaker_open() -> bool:
         }
     
     if _request_cache.circuit_breaker['disabled']:
-        logger.debug(f"Circuit breaker aberto na query atual - tracker desabilitado para esta requisição")
+        logger.debug("Circuit breaker: tracker desabilitado (query atual)")
     
     return _request_cache.circuit_breaker['disabled']
 
@@ -121,7 +121,7 @@ def _record_timeout():
                 redis.hdel(_CIRCUIT_BREAKER_KEY, 'timeouts')
             return
         except Exception as e:
-            logger.debug(f"Erro ao registrar timeout: {e}")
+            logger.debug("Timeout register error")
     
     # Fallback: usa cache por requisição (apenas durante a query atual)
     if not hasattr(_request_cache, 'circuit_breaker'):
@@ -135,10 +135,7 @@ def _record_timeout():
     # Se atingiu o limite, abre o circuit breaker apenas para esta query
     if _request_cache.circuit_breaker['timeout_count'] >= _CIRCUIT_BREAKER_TIMEOUT_THRESHOLD:
         _request_cache.circuit_breaker['disabled'] = True
-        logger.debug(
-            f"Circuit breaker aberto (query atual): {_request_cache.circuit_breaker['timeout_count']} timeouts consecutivos. "
-            f"Tracker desabilitado para esta query"
-        )
+        logger.debug(f"Circuit breaker: {_request_cache.circuit_breaker['timeout_count']} timeouts (query atual)")
 
 
 def _record_success():
@@ -194,13 +191,22 @@ class TrackerListProvider:
 
         # Verifica circuit breaker antes de tentar buscar trackers remotos
         if _is_circuit_breaker_open():
-            logger.debug("Circuit breaker aberto - pulando busca de trackers remotos")
+            logger.debug("Circuit breaker: pulando trackers remotos")
+            # Se Redis está desativado e há cache em memória (mesmo expirado), usa como fallback
+            if not self.redis and self._memory_cache:
+                logger.debug("Usando cache em memória expirado como fallback (Redis desativado)")
+                return list(self._memory_cache)
             return []
 
         trackers = self._fetch_remote_trackers()
         if trackers:
             self._cache_trackers(trackers)
             return trackers
+
+        # Se falhou ao buscar e Redis está desativado, usa cache em memória (mesmo expirado) como último recurso
+        if not self.redis and self._memory_cache:
+            logger.debug("Falha ao buscar trackers remotos - usando cache em memória como fallback (Redis desativado)")
+            return list(self._memory_cache)
 
         logger.error("Falha ao obter lista dinâmica de trackers.")
         return []
@@ -232,11 +238,32 @@ class TrackerListProvider:
         return None
 
     def _fetch_remote_trackers(self) -> Optional[List[str]]:
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        
         session = requests.Session()
         session.headers.update({"User-Agent": "DFIndexer/1.0"})
+        
+        # Configura retry apenas para erros HTTP (não para DNS/conexão)
+        # Erros de DNS não devem ser retentados - são problemas de rede, não temporários
+        retry_strategy = Retry(
+            total=1,  # Apenas 1 tentativa (sem retry) para evitar spam de logs
+            backoff_factor=0,
+            status_forcelist=[429, 500, 502, 503, 504],  # Apenas erros HTTP específicos
+            allowed_methods=["GET"],
+            # Não retenta em erros de conexão/DNS
+            connect=0,
+            read=0,
+            redirect=0,
+            status=1  # Apenas 1 retry para erros HTTP
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
         for source in _TRACKER_SOURCES:
             try:
-                resp = session.get(source, timeout=10)
+                resp = session.get(source, timeout=(5, 15))  # (connect, read) timeout
                 resp.raise_for_status()
                 trackers = [
                     tracker
@@ -258,25 +285,17 @@ class TrackerListProvider:
                                 _logged_sources.pop(oldest_key, None)
                     
                     if should_log:
-                        logger.debug(
-                            "Lista de trackers dinâmica carregada (%s) com %d entradas.",
-                            source,
-                            len(trackers),
-                        )
+                        logger.debug("Trackers carregados: %s (%d)", source, len(trackers))
                     _record_success()  # Registra sucesso
                     return trackers
             except requests.exceptions.Timeout:
                 # Timeout detectado - registra e continua para próxima fonte
                 _record_timeout()
-                logger.debug(
-                    "Timeout ao obter trackers de %s", source
-                )
+                logger.debug("Timeout: %s", source)
             except requests.exceptions.ReadTimeout:
                 # Read timeout detectado - registra e continua para próxima fonte
                 _record_timeout()
-                logger.debug(
-                    "Read timeout ao obter trackers de %s", source
-                )
+                logger.debug("Read timeout: %s", source)
             except requests.exceptions.ConnectionError as exc:
                 # Erro de conexão (DNS, rede, etc.)
                 error_msg = str(exc)
@@ -291,32 +310,22 @@ class TrackerListProvider:
                 # Detecta tipo específico de erro
                 if "Failed to resolve" in error_msg or "No address associated" in error_msg:
                     # Erro de DNS - não consegue resolver o hostname
-                    logger.debug(
-                        "Erro de DNS ao obter trackers de %s (host: %s)", source, host
-                    )
+                    logger.debug("DNS error: %s (host: %s)", source, host)
                 elif "Connection refused" in error_msg:
-                    logger.debug(
-                        "Conexão recusada ao obter trackers de %s (host: %s)", source, host
-                    )
+                    logger.debug("Connection refused: %s (host: %s)", source, host)
                 else:
                     # Outros erros de conexão - mostra mensagem resumida
                     short_msg = error_msg.split('(')[0].strip() if '(' in error_msg else error_msg[:100]
-                    logger.debug(
-                        "Erro de conexão ao obter trackers de %s: %s", source, short_msg
-                    )
+                    logger.debug("Connection error: %s - %s", source, short_msg[:50])
             except requests.exceptions.HTTPError as exc:
                 # Erro HTTP (404, 500, etc.)
                 status_code = exc.response.status_code if hasattr(exc, 'response') and exc.response else 'unknown'
-                logger.debug(
-                    "Erro HTTP %s ao obter trackers de %s", status_code, source
-                )
+                logger.debug("HTTP %s: %s", status_code, source)
             except Exception as exc:  # noqa: BLE001
                 # Outros erros - mostra apenas mensagem principal
                 error_type = type(exc).__name__
                 error_msg = str(exc).split('\n')[0]  # Pega apenas primeira linha
-                logger.debug(
-                    "Falha ao obter trackers de %s (%s): %s", source, error_type, error_msg
-                )
+                logger.debug("Error: %s (%s) - %s", source, error_type, error_msg[:50])
         return None
 
     def _cache_trackers(self, trackers: List[str]) -> None:

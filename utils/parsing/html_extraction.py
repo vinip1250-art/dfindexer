@@ -101,7 +101,7 @@ def extract_magnet_links(
                                 if resolved_magnet and resolved_magnet not in magnet_links:
                                     magnet_links.append(resolved_magnet)
                             except Exception as e:
-                                logger.debug(f"Erro ao resolver link protegido {href}: {e}")
+                                logger.debug(f"Link resolver error: {type(e).__name__}")
                                 continue
             
             if magnet_links:
@@ -132,7 +132,7 @@ def extract_magnet_links(
                         if resolved_magnet and resolved_magnet not in magnet_links:
                             magnet_links.append(resolved_magnet)
                     except Exception as e:
-                        logger.debug(f"Erro ao resolver link protegido {href}: {e}")
+                        logger.debug(f"Link resolver error: {type(e).__name__}")
                         continue
     
     return magnet_links

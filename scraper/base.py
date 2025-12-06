@@ -59,11 +59,33 @@ class BaseScraper(ABC):
         # Inicializa FlareSolverr se habilitado e configurado
         self.use_flaresolverr = use_flaresolverr and Config.FLARESOLVERR_ADDRESS is not None
         self.flaresolverr_client: Optional[FlareSolverrClient] = None
+        
+        # Se use_flaresolverr está True mas FLARESOLVERR_ADDRESS não está configurado, mostra warning
+        if use_flaresolverr and Config.FLARESOLVERR_ADDRESS is None:
+            logger.warning("[[ FlareSolverr Não Conectado ]] - FLARESOLVERR_ADDRESS não configurado")
+            self.use_flaresolverr = False
+        
         if self.use_flaresolverr:
             try:
                 self.flaresolverr_client = FlareSolverrClient(Config.FLARESOLVERR_ADDRESS)
+                # Testa conexão básica (timeout curto para não travar inicialização)
+                try:
+                    test_response = requests.get(f"{Config.FLARESOLVERR_ADDRESS.rstrip('/')}/v1", timeout=2)
+                    if test_response.status_code not in (200, 404, 405):  # 404/405 são OK (API existe)
+                        raise Exception(f"FlareSolverr retornou status {test_response.status_code}")
+                except requests.exceptions.ConnectionError:
+                    raise Exception("Connection refused")
+                except requests.exceptions.Timeout:
+                    raise Exception("Connection timeout")
+                except Exception as test_e:
+                    # Se o teste falhar, mostra warning mas continua (pode ser temporário)
+                    error_type = type(test_e).__name__
+                    error_msg = str(test_e).split('\n')[0][:100] if str(test_e) else str(test_e)
+                    logger.warning(f"[[ FlareSolverr Não Conectado ]] - {error_type}: {error_msg}")
             except Exception as e:
-                logger.warning(f"Falha ao inicializar FlareSolverr: {e}. Continuando sem FlareSolverr.")
+                error_type = type(e).__name__
+                error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
+                logger.warning(f"[[ FlareSolverr Não Conectado ]] - {error_type}: {error_msg}")
                 self.use_flaresolverr = False
     
     def get_document(self, url: str, referer: str = '') -> Optional[BeautifulSoup]:
@@ -133,14 +155,15 @@ class BaseScraper(ABC):
                         
                         return BeautifulSoup(html_content, 'html.parser')
                     else:
-                        failure_key = f"flaresolverr:failure:{url}"
+                        from cache.redis_keys import flaresolverr_failure_key
+                        failure_key = flaresolverr_failure_key(url)
                         should_retry = True
                         
                         # Tenta Redis primeiro
                         if self.redis and not self._is_test:
                             try:
                                 if self.redis.exists(failure_key):
-                                    logger.debug(f"URL {url} já falhou recentemente com FlareSolverr. Pulando retry.")
+                                    logger.debug(f"FlareSolverr: URL já falhou - pulando retry")
                                     should_retry = False
                                 else:
                                     self.redis.setex(failure_key, 300, "1")
@@ -153,17 +176,17 @@ class BaseScraper(ABC):
                             
                             expire_at = _request_cache.flaresolverr_failures.get(failure_key, 0)
                             if time.time() < expire_at:
-                                logger.debug(f"URL {url} já falhou recentemente com FlareSolverr (memória). Pulando retry.")
+                                logger.debug(f"FlareSolverr: URL já falhou (memória) - pulando retry")
                                 should_retry = False
                             else:
                                 _request_cache.flaresolverr_failures[failure_key] = time.time() + 300  # 5 minutos
                         
                         if "%3A" in url or "%3a" in url.lower():
-                            logger.debug(f"URL contém dois pontos codificados (%3A). FlareSolverr pode ter problemas. Pulando retry.")
+                            logger.debug(f"FlareSolverr: URL com %3A - pulando retry")
                             should_retry = False
                         
                         if should_retry:
-                            logger.debug(f"FlareSolverr retornou None para {url}. Tentando criar nova sessão.")
+                            logger.debug(f"FlareSolverr: None retornado - criando nova sessão")
                             new_session_id = self.flaresolverr_client.get_or_create_session(
                                 self.base_url,
                                 skip_redis=self._is_test
@@ -210,7 +233,7 @@ class BaseScraper(ABC):
                                             _request_cache.flaresolverr_failures = {}
                                         _request_cache.flaresolverr_failures[failure_key] = time.time() + 300  # 5 minutos
             except Exception as e:
-                logger.debug(f"Erro ao usar FlareSolverr para {url}: {e}. Tentando requisição direta.")
+                logger.debug(f"FlareSolverr error: {type(e).__name__} - tentando requisição direta")
         
         headers = {'Referer': referer if referer else self.base_url}
         
@@ -240,7 +263,10 @@ class BaseScraper(ABC):
             return BeautifulSoup(html_content, 'html.parser')
         
         except Exception as e:
-            logger.error(f"Erro ao obter documento {url}: {e}")
+            error_type = type(e).__name__
+            error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
+            url_preview = url[:50] if url else 'N/A'
+            logger.error(f"Document error: {error_type} - {error_msg} (url: {url_preview}...)")
             return None
     
     @abstractmethod
@@ -394,7 +420,7 @@ class BaseScraper(ABC):
                 resolved = resolve_protected_link(href, self.session, self.base_url, redis=self.redis)
                 return resolved
         except Exception as e:
-            logger.debug(f"Erro ao resolver link {href[:50]}...: {e}")
+            logger.debug(f"Link resolver error: {type(e).__name__}")
         
         # Se não é magnet e não é protegido, retorna None
         return None
@@ -453,7 +479,7 @@ class BaseScraper(ABC):
         # Busca metadata para todos os torrents de uma vez com semáforo global
         from magnet.metadata import fetch_metadata_from_itorrents
         from magnet.parser import MagnetParser
-        from utils.concurrency.metadata_semaphore import acquire_metadata_slot, release_metadata_slot
+        from utils.concurrency.metadata_semaphore import metadata_slot
         
         torrents_to_fetch = [
             t for t in torrents
@@ -464,50 +490,58 @@ class BaseScraper(ABC):
             return
         
         def fetch_metadata_for_torrent(torrent: Dict) -> tuple:
-            # Adquire slot no semáforo global antes de fazer requisição
-            acquire_metadata_slot()
-            try:
-                # Obtém info_hash
-                info_hash = torrent.get('info_hash')
-                if not info_hash:
-                    try:
-                        magnet_data = MagnetParser.parse(torrent.get('magnet_link'))
-                        info_hash = magnet_data.get('info_hash')
-                    except Exception:
-                        return (torrent, None)
-                
-                if not info_hash:
-                    return (torrent, None)
-                
-                # Verifica cross_data primeiro (evita consulta desnecessária ao metadata)
-                # Mas só pula se já tem TUDO que precisa (release_title_magnet, size, date)
+            # Obtém info_hash ANTES de adquirir slot (economiza slots)
+            info_hash = torrent.get('info_hash')
+            if not info_hash:
                 try:
-                    from utils.text.cross_data import get_cross_data_from_redis
-                    cross_data = get_cross_data_from_redis(info_hash)
-                    if cross_data:
-                        has_release_title = cross_data.get('release_title_magnet')
-                        has_size = cross_data.get('size')
-                        # Se já temos release_title_magnet E size no cross_data, pode pular metadata
-                        # (date pode vir depois, mas não é crítico)
-                        if has_release_title and has_size:
-                            # Retorna None para indicar que não precisa buscar
-                            return (torrent, None)
+                    from magnet.parser import MagnetParser
+                    magnet_data = MagnetParser.parse(torrent.get('magnet_link'))
+                    info_hash = magnet_data.get('info_hash')
                 except Exception:
-                    pass
-                
-                metadata = fetch_metadata_from_itorrents(info_hash)
-                return (torrent, metadata)
-            except Exception:
+                    return (torrent, None)
+            
+            if not info_hash:
                 return (torrent, None)
-            finally:
-                # Sempre libera o slot, mesmo em caso de erro
-                release_metadata_slot()
+                
+            # Verifica cross_data ANTES de adquirir slot (economiza slots)
+            try:
+                from utils.text.cross_data import get_cross_data_from_redis
+                cross_data = get_cross_data_from_redis(info_hash)
+                if cross_data:
+                    has_release_title = cross_data.get('release_title_magnet')
+                    has_size = cross_data.get('size')
+                    # Se já temos release_title_magnet E size no cross_data, pode pular metadata
+                    if has_release_title and has_size:
+                        return (torrent, None)
+            except Exception:
+                pass
+            
+            # Verifica cache de metadata ANTES de adquirir slot (economiza slots)
+            try:
+                from cache.metadata_cache import MetadataCache
+                metadata_cache = MetadataCache()
+                cached_metadata = metadata_cache.get(info_hash.lower())
+                if cached_metadata:
+                    return (torrent, cached_metadata)
+            except Exception:
+                pass
+            
+            # Só adquire slot se realmente precisa buscar metadata
+            from utils.concurrency.metadata_semaphore import metadata_slot
+            with metadata_slot():
+                try:
+                    from magnet.metadata import fetch_metadata_from_itorrents
+                    metadata = fetch_metadata_from_itorrents(info_hash)
+                    return (torrent, metadata)
+                except Exception:
+                    return (torrent, None)
         
         if len(torrents_to_fetch) > 1:
             from concurrent.futures import ThreadPoolExecutor, as_completed
             
             # Limita workers locais, mas o semáforo global controla requisições simultâneas
-            max_workers = min(8, len(torrents_to_fetch))
+            # Aumentado de 8 para 16 para permitir mais paralelismo (o semáforo global limita a 64)
+            max_workers = min(16, len(torrents_to_fetch))
             
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_torrent = {
@@ -517,7 +551,7 @@ class BaseScraper(ABC):
                 
                 for future in as_completed(future_to_torrent):
                     try:
-                        torrent, metadata = future.result(timeout=10)
+                        torrent, metadata = future.result(timeout=30)  # Aumentado de 10s para 30s
                         if metadata:
                             torrent['_metadata'] = metadata
                             torrent['_metadata_fetched'] = True
@@ -554,7 +588,7 @@ class BaseScraper(ABC):
                     cross_size = cross_data.get('size')
                     if cross_size and cross_size.strip() and cross_size != 'N/A':
                         torrent['size'] = cross_size.strip()
-                        continue
+                continue
             
             magnet_data = None
             try:
@@ -747,5 +781,5 @@ class BaseScraper(ABC):
                 save_cross_data_to_redis(info_hash, cross_data_to_save)
             except Exception as e:
                 # Log silencioso - não queremos interromper o processamento por erro no cross-data
-                logger.debug(f"Erro ao salvar tracker no cross-data para {info_hash[:16]}...: {e}")
+                logger.debug(f"Cross-data save error: {info_hash[:16]}")
 

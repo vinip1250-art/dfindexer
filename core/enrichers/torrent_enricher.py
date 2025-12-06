@@ -90,7 +90,7 @@ class TorrentEnricher:
     def _fetch_metadata_batch(self, torrents: List[Dict]) -> None:
         # Busca metadata em lote com semáforo global para limitar requisições simultâneas
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        from utils.concurrency.metadata_semaphore import acquire_metadata_slot, release_metadata_slot
+        from utils.concurrency.metadata_semaphore import metadata_slot
         
         torrents_to_fetch = [
             t for t in torrents
@@ -101,47 +101,56 @@ class TorrentEnricher:
             return
         
         def fetch_metadata_for_torrent(torrent: Dict) -> tuple:
-            # Adquire slot no semáforo global antes de fazer requisição
-            acquire_metadata_slot()
-            try:
-                info_hash = torrent.get('info_hash')
-                if not info_hash:
-                    try:
-                        magnet_data = MagnetParser.parse(torrent.get('magnet_link'))
-                        info_hash = magnet_data.get('info_hash')
-                    except Exception:
-                        return (torrent, None)
-                
-                if not info_hash:
-                    return (torrent, None)
-                
-                # Verifica cross_data primeiro (evita consulta desnecessária ao metadata)
-                # Mas só pula se já tem TUDO que precisa (release_title_magnet, size, date)
+            # Obtém info_hash ANTES de adquirir slot (economiza slots)
+            info_hash = torrent.get('info_hash')
+            if not info_hash:
                 try:
-                    from utils.text.cross_data import get_cross_data_from_redis
-                    cross_data = get_cross_data_from_redis(info_hash)
-                    if cross_data:
-                        has_release_title = cross_data.get('release_title_magnet')
-                        has_size = cross_data.get('size')
-                        # Se já temos release_title_magnet E size no cross_data, pode pular metadata
-                        # (date pode vir depois, mas não é crítico)
-                        if has_release_title and has_size:
-                            # Retorna None para indicar que não precisa buscar
-                            return (torrent, None)
+                    from magnet.parser import MagnetParser
+                    magnet_data = MagnetParser.parse(torrent.get('magnet_link'))
+                    info_hash = magnet_data.get('info_hash')
                 except Exception:
-                    pass
-                
-                metadata = fetch_metadata_from_itorrents(info_hash)
-                return (torrent, metadata)
-            except Exception:
+                    return (torrent, None)
+            
+            if not info_hash:
                 return (torrent, None)
-            finally:
-                # Sempre libera o slot, mesmo em caso de erro
-                release_metadata_slot()
+                
+            # Verifica cross_data ANTES de adquirir slot (economiza slots)
+            try:
+                from utils.text.cross_data import get_cross_data_from_redis
+                cross_data = get_cross_data_from_redis(info_hash)
+                if cross_data:
+                    has_release_title = cross_data.get('release_title_magnet')
+                    has_size = cross_data.get('size')
+                    # Se já temos release_title_magnet E size no cross_data, pode pular metadata
+                    if has_release_title and has_size:
+                        return (torrent, None)
+            except Exception:
+                pass
+            
+            # Verifica cache de metadata ANTES de adquirir slot (economiza slots)
+            try:
+                from cache.metadata_cache import MetadataCache
+                metadata_cache = MetadataCache()
+                cached_metadata = metadata_cache.get(info_hash.lower())
+                if cached_metadata:
+                    return (torrent, cached_metadata)
+            except Exception:
+                pass
+            
+            # Só adquire slot se realmente precisa buscar metadata
+            from utils.concurrency.metadata_semaphore import metadata_slot
+            with metadata_slot():
+                try:
+                    from magnet.metadata import fetch_metadata_from_itorrents
+                    metadata = fetch_metadata_from_itorrents(info_hash)
+                    return (torrent, metadata)
+                except Exception:
+                    return (torrent, None)
         
         if len(torrents_to_fetch) > 1:
             # Limita workers locais, mas o semáforo global controla requisições simultâneas
-            max_workers = min(8, len(torrents_to_fetch))
+            # Aumentado de 8 para 16 para permitir mais paralelismo (o semáforo global limita a 64)
+            max_workers = min(16, len(torrents_to_fetch))
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_torrent = {
                     executor.submit(fetch_metadata_for_torrent, t): t
@@ -150,7 +159,7 @@ class TorrentEnricher:
                 
                 for future in as_completed(future_to_torrent):
                     try:
-                        torrent, metadata = future.result(timeout=10)
+                        torrent, metadata = future.result(timeout=30)  # Aumentado de 10s para 30s
                         if metadata:
                             torrent['_metadata'] = metadata
                             torrent['_metadata_fetched'] = True
@@ -186,7 +195,7 @@ class TorrentEnricher:
                     cross_size = cross_data.get('size')
                     if cross_size and cross_size.strip() and cross_size != 'N/A':
                         torrent['size'] = cross_size.strip()
-                        continue
+                continue
             
             magnet_data = None
             try:

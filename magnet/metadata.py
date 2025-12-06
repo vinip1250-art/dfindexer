@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 _request_cache = threading.local()
 _rate_limiter_lock = threading.Lock()
 _rate_limiter_last_request = 0.0
-_rate_limiter_min_interval = 1.0
-_rate_limiter_burst_tokens = 2
+_rate_limiter_min_interval = 0.5  # Reduzido de 1.0s para 0.5s (2 requisições/segundo)
+_rate_limiter_burst_tokens = 4  # Aumentado de 2 para 4 tokens
 _CIRCUIT_BREAKER_KEY = circuit_metadata_key()
 _CIRCUIT_BREAKER_TIMEOUT_THRESHOLD = 3
 _CIRCUIT_BREAKER_503_THRESHOLD = 5
@@ -61,9 +61,9 @@ def _log_redis_error(operation: str, error: Exception, log_once: bool = True) ->
         log_once: Se True, só loga uma vez por operação (evita spam)
     """
     if _is_redis_connection_error(error):
-        logger.debug(f"Redis indisponível - {operation} usando fallback em memória")
+        logger.debug(f"Redis fallback: {operation}")
     else:
-        logger.debug(f"Erro ao {operation} no Redis: {error}")
+        logger.debug(f"Redis error: {operation}")
 
 
 def _rate_limit():
@@ -124,11 +124,8 @@ def _is_circuit_breaker_open() -> bool:
                             _circuit_breaker_log_cache[log_key] = now
                             should_log = True
                     
-                    if should_log:
-                        logger.debug(f"[CIRCUIT BREAKER] metadata desabilitado por mais {remaining}s")
                     return True
                 # Período expirou, limpa o campo
-                logger.debug("Circuit breaker expirou no Redis - reabilitando metadata")
                 redis.hdel(_CIRCUIT_BREAKER_KEY, 'disabled')
         except Exception as e:
             _log_redis_error("verificar circuit breaker", e)
@@ -142,7 +139,7 @@ def _is_circuit_breaker_open() -> bool:
         }
     
     if _request_cache.circuit_breaker['disabled']:
-        logger.debug(f"Circuit breaker aberto na query atual - metadata desabilitado para esta requisição")
+        logger.debug("Circuit breaker: metadata desabilitado (query atual)")
     
     return _request_cache.circuit_breaker['disabled']
 
@@ -189,10 +186,7 @@ def _record_timeout():
     # Se atingiu o limite, abre o circuit breaker apenas para esta query
     if _request_cache.circuit_breaker['timeout_count'] >= _CIRCUIT_BREAKER_TIMEOUT_THRESHOLD:
         _request_cache.circuit_breaker['disabled'] = True
-        logger.debug(
-            f"Circuit breaker aberto (query atual): {_request_cache.circuit_breaker['timeout_count']} timeouts consecutivos. "
-            f"Metadata desabilitado para esta query"
-        )
+        logger.debug(f"Circuit breaker: {_request_cache.circuit_breaker['timeout_count']} timeouts (query atual)")
 
 
 def _record_503():
@@ -237,10 +231,7 @@ def _record_503():
     # Se atingiu o limite, abre o circuit breaker apenas para esta query
     if _request_cache.circuit_breaker['503_count'] >= _CIRCUIT_BREAKER_503_THRESHOLD:
         _request_cache.circuit_breaker['disabled'] = True
-        logger.debug(
-            f"Circuit breaker aberto (query atual): {_request_cache.circuit_breaker['503_count']} erros 503 consecutivos. "
-            f"Metadata desabilitado para esta query"
-        )
+        logger.debug(f"Circuit breaker: {_request_cache.circuit_breaker['503_count']} erros 503 (query atual)")
 
 
 def _record_success():
@@ -363,7 +354,7 @@ def _parse_bencode_size(data: bytes) -> Optional[int]:
         
         return None
     except Exception as e:
-        logger.debug(f"Erro ao parsear bencode: {e}")
+        logger.debug(f"Bencode parse error: {type(e).__name__}")
         return None
 
 
@@ -384,54 +375,55 @@ def _fetch_torrent_header(info_hash: str, use_lowercase: bool = False) -> Tuple[
         'Accept-Encoding': 'gzip',
     })
     
-    # Timeout reduzido para evitar esperas longas (5s connect + 3s read)
-    timeout_config = (5, 3)  # (connect_timeout, read_timeout)
+    # Timeout otimizado: reduzido para acelerar requisições (2s connect + 1.5s read)
+    timeout_config = (2, 1.5)  # (connect_timeout, read_timeout) - reduzido de (3, 2)
     
     # Tenta baixar chunks progressivamente até ter o header completo
-    chunk_size = 6 * 1024  # 6KB inicial
+    # Chunk inicial muito maior para reduzir drasticamente número de requisições HTTP
+    chunk_size = 128 * 1024  # 128KB inicial (aumentado de 32KB) - menos requisições = mais rápido
     max_size = 512 * 1024   # 512KB máximo
     all_data = b''
     start = 0
-    max_iterations = 20  # Limite de iterações para evitar loops infinitos
+    max_iterations = 8  # Reduzido de 10 para 8 (chunks maiores = menos iterações necessárias)
     iteration = 0
+    
+    # Rate limiting apenas uma vez no início (não a cada chunk)
+    _rate_limit()
     
     try:
         while start < max_size and iteration < max_iterations:
             iteration += 1
-            _rate_limit()  # Rate limiting
             
             # Faz requisição com Range header
             headers = {'Range': f'bytes={start}-{start + chunk_size - 1}'}
             try:
                 response = session.get(url, headers=headers, timeout=timeout_config)
             except requests.exceptions.Timeout:
-                # Timeout detectado - registra e retorna None com flag de timeout
+                # Timeout detectado - registra mas NÃO cacheia falha (pode ser temporário)
                 _record_timeout()
-                logger.debug(f"Timeout ao buscar torrent header de {info_hash_hex}")
                 return None, True, False
             except requests.exceptions.ReadTimeout:
-                # Read timeout detectado - registra e retorna None com flag de timeout
+                # Read timeout detectado - registra mas NÃO cacheia falha (pode ser temporário)
                 _record_timeout()
-                logger.debug(f"Read timeout ao buscar torrent header de {info_hash_hex}")
                 return None, True, False
             
             # Aceita 200 (full) ou 206 (partial)
             if response.status_code not in (200, 206):
                 if response.status_code == 404:
-                    return None, False, False  # Torrent não encontrado
+                    # Torrent não encontrado - cacheia por tempo curto (1m) para evitar tentativas repetidas
+                    _cache_failure(info_hash, is_503=False)
+                    return None, False, False
                 if response.status_code == 503:
                     # Service Unavailable - registra 503 e cacheia falha por mais tempo
                     _record_503()
                     _cache_failure(info_hash, is_503=True)
-                    logger.debug(f"503 Service Unavailable ao buscar torrent header de {info_hash_hex}")
                     return None, False, True
-                # Outros erros HTTP
+                # Outros erros HTTP (500, 502, etc.) - cacheia por tempo curto
                 try:
                     response.raise_for_status()
                 except requests.exceptions.HTTPError:
-                    # Erro HTTP genérico - cacheia falha
+                    # Erro HTTP genérico - cacheia falha por tempo curto
                     _cache_failure(info_hash, is_503=False)
-                    logger.debug(f"Erro HTTP {response.status_code} ao buscar torrent header de {info_hash_hex}")
                     return None, False, False
             
             chunk = response.content
@@ -456,42 +448,44 @@ def _fetch_torrent_header(info_hash: str, use_lowercase: bool = False) -> Tuple[
             if len(chunk) < chunk_size:
                 break
             
-            # Próximo chunk
+            # Próximo chunk - aumenta mais agressivamente
             start += len(chunk)
-            chunk_size = min(chunk_size * 2, 64 * 1024)  # Aumenta chunk, máximo 64KB
+            chunk_size = min(chunk_size * 2, 256 * 1024)  # Aumenta chunk, máximo 256KB (aumentado de 128KB)
         
         if all_data:
             _record_success()  # Registra sucesso
         return (all_data if all_data else None), False, False
     
     except requests.exceptions.Timeout:
+        # Timeout - registra mas NÃO cacheia falha (pode ser temporário)
         _record_timeout()
-        logger.debug(f"Timeout ao buscar torrent header de {info_hash_hex}")
         return None, True, False
     except requests.exceptions.ReadTimeout:
+        # Read timeout - registra mas NÃO cacheia falha (pode ser temporário)
         _record_timeout()
-        logger.debug(f"Read timeout ao buscar torrent header de {info_hash_hex}")
         return None, True, False
     except requests.exceptions.HTTPError as e:
         # Trata erros HTTP específicos
         if hasattr(e.response, 'status_code') and e.response.status_code == 503:
             _record_503()
             _cache_failure(info_hash, is_503=True)
-            logger.debug(f"503 Service Unavailable ao buscar torrent header de {info_hash_hex}")
             return None, False, True
-        else:
+        elif hasattr(e.response, 'status_code') and e.response.status_code == 404:
+            # 404 - torrent não encontrado, cacheia por tempo curto
             _cache_failure(info_hash, is_503=False)
-            logger.debug(f"Erro HTTP ao buscar torrent header de {info_hash_hex}: {e}")
             return None, False, False
-    except requests.exceptions.ConnectionError as e:
-        # Erro de conexão (DNS, rede, etc.) - não registra como timeout, apenas loga
-        logger.debug(f"Erro de conexão ao buscar torrent header de {info_hash_hex}: {e}")
+        else:
+            # Outros erros HTTP - cacheia por tempo curto
+            _cache_failure(info_hash, is_503=False)
+            return None, False, False
+    except requests.exceptions.ConnectionError:
+        # Erro de conexão (DNS, rede, etc.) - não cacheia falha, pode ser temporário
         return None, False, False
-    except requests.RequestException as e:
-        logger.debug(f"Erro ao buscar torrent header de {info_hash_hex}: {e}")
+    except requests.exceptions.RequestException:
+        # Outros erros de requisição - não cacheia falha, pode ser temporário
         return None, False, False
-    except Exception as e:
-        logger.debug(f"Erro inesperado ao buscar torrent: {e}")
+    except Exception:
+        # Erro inesperado - não cacheia falha
         return None, False, False
 
 
@@ -536,8 +530,6 @@ def fetch_metadata_from_itorrents(info_hash: str) -> Optional[Dict[str, any]]:
                 _circuit_breaker_log_cache[log_key] = now
                 should_log = True
         
-        if should_log:
-            logger.debug(f"[CIRCUIT BREAKER] aberto - pulando busca de metadata (muitos timeouts/503s recentes)")
         return None
     
     # Verifica se há falha recente em cache
@@ -552,8 +544,6 @@ def fetch_metadata_from_itorrents(info_hash: str) -> Optional[Dict[str, any]]:
                 _cache_failure_log_cache[log_key] = now
                 should_log = True
         
-        if should_log:
-            logger.debug(f"[CACHE FAILURE] Recente - pulando busca de metadata: {info_hash[:16]}...")
         return None
     
     # Usa lock por hash para evitar requisições simultâneas ao mesmo hash
@@ -570,8 +560,6 @@ def fetch_metadata_from_itorrents(info_hash: str) -> Optional[Dict[str, any]]:
             pass
         
         # Busca do iTorrents (não estava em cache)
-        logger.debug(f"[ITORRENTS FETCH] Buscando metadata do iTorrents.org: {info_hash[:16]}...")
-        
         # Tenta com lowercase primeiro (mais comum)
         torrent_data, was_timeout, was_503 = _fetch_torrent_header(info_hash, use_lowercase=True)
         
@@ -581,25 +569,22 @@ def fetch_metadata_from_itorrents(info_hash: str) -> Optional[Dict[str, any]]:
             torrent_data, was_timeout, was_503 = _fetch_torrent_header(info_hash, use_lowercase=False)
         
         if not torrent_data:
-            # Cacheia a falha (já foi cacheado dentro de _fetch_torrent_header se foi 503)
-            if was_timeout:
-                logger.debug(f"[ITORRENTS FAIL] Timeout ao buscar metadata do iTorrents.org: {info_hash[:16]}...")
-                _cache_failure(info_hash, is_503=True)  # Trata timeout como 503
-            elif was_503:
-                logger.debug(f"[ITORRENTS FAIL] Erro 503 (Service Unavailable) ao buscar metadata do iTorrents.org: {info_hash[:16]}...")
-            else:
-                logger.debug(f"[ITORRENTS FAIL] Não foi possível buscar metadata do iTorrents.org: {info_hash[:16]}...")
-                _cache_failure(info_hash, is_503=False)
+            # Timeouts não devem cachear falha - podem ser temporários (rede lenta, servidor ocupado)
+            # Apenas cacheia se foi erro HTTP específico (já foi cacheado dentro de _fetch_torrent_header)
+            if was_503:
+                # Erro 503 já foi cacheado dentro de _fetch_torrent_header
+                pass
+            elif not was_timeout:
+                # Outras falhas (404, 500, etc.) já foram cacheadas dentro de _fetch_torrent_header
+                # Timeouts não cacheiam para permitir retry rápido
+                pass
             return None
         
         # Extrai tamanho do bencode
         size = _parse_bencode_size(torrent_data)
         
         if not size:
-            logger.debug(f"[ITORRENTS FAIL] Não foi possível extrair tamanho do metadata: {info_hash[:16]}...")
             return None
-        
-        logger.debug(f"[ITORRENTS SUCCESS] Metadata extraído com sucesso do iTorrents.org: {info_hash[:16]}... (size: {size})")
         
         # Tenta extrair nome também (opcional)
         name = None
@@ -704,6 +689,6 @@ def get_torrent_size(magnet_link: str, info_hash: Optional[str] = None) -> Optio
         return format_bytes(size_bytes)
     
     except Exception as e:
-        logger.debug(f"Erro ao obter tamanho do torrent: {e}")
+        logger.debug(f"Torrent size error: {type(e).__name__}")
         return None
 

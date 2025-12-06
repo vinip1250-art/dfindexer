@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Scraper específico para Starck Filmes
 class StarckScraper(BaseScraper):
     SCRAPER_TYPE = "starck"
-    DEFAULT_BASE_URL = "https://starckfilmes-v3.com/"
+    DEFAULT_BASE_URL = "https://www.starckfilmes.fans/"
     DISPLAY_NAME = "Starck"
     
     def __init__(self, base_url: Optional[str] = None, use_flaresolverr: bool = False):
@@ -324,7 +324,11 @@ class StarckScraper(BaseScraper):
                 torrents.append(torrent)
             
             except Exception as e:
-                logger.error(f"Erro ao processar magnet {link}: {e}")
+                error_type = type(e).__name__
+                error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
+                link_str = str(magnet_link) if magnet_link else 'N/A'
+                link_preview = link_str[:50] if link_str != 'N/A' else 'N/A'
+                logger.error(f"Magnet error: {error_type} - {error_msg} (link: {link_preview}...)")
                 continue
         
         return torrents

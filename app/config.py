@@ -28,7 +28,7 @@ class Config:
     METRICS_PORT: int = int(os.getenv('METRICS_PORT', '8081'))
     
     # Redis
-    REDIS_HOST: str = os.getenv('REDIS_HOST', 'localhost')
+    REDIS_HOST: Optional[str] = os.getenv('REDIS_HOST', None)  # None = não configurado
     REDIS_PORT: int = int(os.getenv('REDIS_PORT', '6379'))
     REDIS_DB: int = int(os.getenv('REDIS_DB', '0'))
     
@@ -54,6 +54,6 @@ class Config:
     
     # Concorrência
     TRACKER_MAX_WORKERS: int = int(os.getenv('TRACKER_MAX_WORKERS', '20'))  # Workers globais para trackers
-    METADATA_MAX_CONCURRENT: int = int(os.getenv('METADATA_MAX_CONCURRENT', '32'))  # Limite global de requisições de metadata simultâneas
+    METADATA_MAX_CONCURRENT: int = int(os.getenv('METADATA_MAX_CONCURRENT', '64'))  # Limite global de requisições de metadata simultâneas (aumentado de 32 para 64)
     FLARESOLVERR_MAX_SESSIONS: int = int(os.getenv('FLARESOLVERR_MAX_SESSIONS', '15'))  # Limite de sessões FlareSolverr simultâneas
     

@@ -135,3 +135,8 @@ def flaresolverr_session_key(base_url: str) -> str:
 def flaresolverr_created_key(base_url: str) -> str:
     # Chave Redis para timestamp de criação de sessão FlareSolverr (4h TTL)
     return f"flaresolverr/created/{base_url}"
+
+
+def flaresolverr_failure_key(url: str) -> str:
+    # Chave Redis para cache de falhas do FlareSolverr (5m TTL)
+    return f"flaresolverr/failure/{url_hash(url)}"

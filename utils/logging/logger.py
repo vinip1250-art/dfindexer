@@ -52,10 +52,11 @@ def setup_logging(log_level: int, log_format: str = 'console'):
     
     # Silencia loggers de bibliotecas externas para reduzir verbosidade
     # urllib3 e requests geram muitos logs de conexões HTTPS que não são úteis
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
-    logging.getLogger('urllib3.connectionpool').setLevel(logging.WARNING)
+    # urllib3.connectionpool em WARNING ainda mostra retries - silencia completamente
+    logging.getLogger('urllib3').setLevel(logging.ERROR)
+    logging.getLogger('urllib3.connectionpool').setLevel(logging.ERROR)
     logging.getLogger('requests').setLevel(logging.WARNING)
-    logging.getLogger('requests.packages.urllib3').setLevel(logging.WARNING)
+    logging.getLogger('requests.packages.urllib3').setLevel(logging.ERROR)
     
     # Silencia werkzeug apenas se nível for alto (para não perder logs importantes do Flask)
     if log_level >= 2:  # warn ou error

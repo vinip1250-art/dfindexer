@@ -111,7 +111,6 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
             cache_key = protlink_key(protlink_url)
             cached = redis_client.get(cache_key)
             if cached:
-                logger.debug(f"[CACHE REDIS HIT] Link protegido: {protlink_url[:50]}...")
                 return cached.decode('utf-8')
         except Exception:
             pass
@@ -123,7 +122,6 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
         
         if protlink_url in _request_cache.protlink_cache:
             cached_magnet = _request_cache.protlink_cache[protlink_url]
-            logger.debug(f"[CACHE MEMÓRIA HIT] Link protegido: {protlink_url[:50]}...")
             return cached_magnet
     
     if 'systemads.org' in protlink_url or 'seuvideo.xyz' in protlink_url or 'get.php' in protlink_url:
@@ -524,7 +522,7 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                     break
         
         except Exception as e:
-            logger.debug(f"Erro ao resolver link protegido {protlink_url[:80]}...: {type(e).__name__}")
+            logger.debug(f"Link resolver error: {type(e).__name__}")
     
     logger.warning(f"Falha ao resolver link protegido após {redirect_count} redirects: {protlink_url[:80]}...")
     return None
