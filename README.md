@@ -182,11 +182,17 @@ docker run -d \
 
 ## 📝 Padronização de Títulos
 Todos os títulos são padronizados no formato:
-
 - **Episódios**: `Title.S02E01.2025.WEB-DL.1080p`
 - **Episódios Múltiplos**: `Title.S02E05-06-07.2025.WEB-DL.1080p`
 - **Séries Completas**: `Title.S02.2025.WEB-DL`
 - **Filmes**: `Title.2025.1080p.BluRay`
+
+## 📝 Title Standardization
+All titles are standardized in the following format:
+- **Episodes**: `Title.S02E01.2025.WEB-DL.1080p`
+- **Multiple Episodes**: `Title.S02E05-06-07.2025.WEB-DL.1080p`
+- **Complete Seasons**: `Title.S02.2025.WEB-DL`
+- **Movies**: `Title.2025.1080p.BluRay`
 
 **Ordem garantida**: `Título → Temporada/Episódio → Ano → Informações Técnicas`
 

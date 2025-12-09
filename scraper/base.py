@@ -186,12 +186,19 @@ class BaseScraper(ABC):
                             should_retry = False
                         
                         if should_retry:
-                            logger.debug(f"FlareSolverr: None retornado - criando nova sessão")
+                            # Tenta obter/criar sessão (pode retornar a mesma se não foi invalidada)
+                            logger.debug(f"FlareSolverr: None retornado - tentando obter/criar sessão")
                             new_session_id = self.flaresolverr_client.get_or_create_session(
                                 self.base_url,
                                 skip_redis=self._is_test
                             )
-                            if new_session_id and new_session_id != session_id:
+                            if new_session_id:
+                                # Se a sessão mudou, tenta com a nova. Se for a mesma, tenta novamente (pode ser erro temporário)
+                                if new_session_id != session_id:
+                                    logger.debug(f"FlareSolverr: usando nova sessão (anterior: {session_id[:20]}..., nova: {new_session_id[:20]}...)")
+                                else:
+                                    logger.debug(f"FlareSolverr: tentando novamente com a mesma sessão (pode ser erro temporário)")
+                                
                                 html_content = self.flaresolverr_client.solve(
                                     url,
                                     new_session_id,

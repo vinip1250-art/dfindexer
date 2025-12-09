@@ -138,5 +138,11 @@ def flaresolverr_created_key(base_url: str) -> str:
 
 
 def flaresolverr_failure_key(url: str) -> str:
-    # Chave Redis para cache de falhas do FlareSolverr (5m TTL)
+    # Chave Redis para cache de falhas do FlareSolverr por URL (5m TTL)
     return f"flaresolverr:failure:{url_hash(url)}"
+
+
+def flaresolverr_session_creation_failure_key(base_url: str) -> str:
+    # Chave Redis para cache de falhas de criação de sessão FlareSolverr (2m TTL)
+    # Usado para evitar tentativas repetidas muito rápidas quando o FlareSolverr está com problemas
+    return f"flaresolverr:session_creation_failure:{base_url}"
