@@ -2,7 +2,7 @@
 """https://github.com/DFlexy"""
 
 from typing import Dict, Callable
-from utils.text.text_processing import check_query_match
+from utils.text.query import check_query_match
 
 
 class QueryFilter:

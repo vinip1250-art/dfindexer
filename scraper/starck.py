@@ -12,11 +12,11 @@ from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
 from utils.parsing.magnet_utils import process_trackers
-from utils.text.text_processing import (
-    clean_title, remove_accents, create_standardized_title,
-    find_year_from_text, find_sizes_from_text, STOP_WORDS,
-    add_audio_tag_if_needed, prepare_release_title
-)
+from utils.text.constants import STOP_WORDS
+from utils.text.cleaning import clean_title, remove_accents
+from utils.text.utils import find_year_from_text, find_sizes_from_text
+from utils.text.title_builder import create_standardized_title, prepare_release_title
+from utils.text.audio import add_audio_tag_if_needed, detect_audio_from_html
 from utils.logging import format_error, format_link_preview
 
 logger = logging.getLogger(__name__)
@@ -160,7 +160,7 @@ class StarckScraper(BaseScraper):
                     translated_title = span2.get_text(strip=True)
                     # Remove entidades HTML
                     translated_title = html.unescape(translated_title)
-                    from utils.text.text_processing import clean_translated_title
+                    from utils.text.cleaning import clean_translated_title
                     translated_title = clean_translated_title(translated_title)
                     break
         
@@ -174,7 +174,7 @@ class StarckScraper(BaseScraper):
                 # Remove entidades HTML
                 translated_title = html.unescape(translated_title)
                 # Limpa o título traduzido
-                from utils.text.text_processing import clean_translated_title
+                from utils.text.cleaning import clean_translated_title
                 translated_title = clean_translated_title(translated_title)
         
         # Garante que não há HTML restante (remove qualquer tag que possa ter sobrado)
@@ -184,19 +184,32 @@ class StarckScraper(BaseScraper):
             # Remove entidades HTML novamente (caso tenha sobrado)
             translated_title = html.unescape(translated_title)
             # Aplica limpeza final
-            from utils.text.text_processing import clean_translated_title
+            from utils.text.cleaning import clean_translated_title
             translated_title = clean_translated_title(translated_title)
         
-        # Extrai ano, tamanhos e IMDB
+        # Extrai ano, tamanhos, áudio e IMDB
         year = ''
         sizes = []
         imdb = ''
+        audio_info = ''  # Para detectar "Idioma: Inglês", "Legenda: PT-BR"
+        audio_html_content = ''  # Armazena HTML completo de TODOS os parágrafos para verificação adicional
+        all_paragraphs_html = []  # Coleta HTML de todos os parágrafos
         for p in capa.select('.post-description p'):
             text = ' '.join(span.get_text() for span in p.find_all('span'))
+            html_content = str(p)
+            all_paragraphs_html.append(html_content)  # Coleta HTML de todos os parágrafos
             y = find_year_from_text(text, page_title)
             if y:
                 year = y
             sizes.extend(find_sizes_from_text(text))
+            
+            # Extrai informação de áudio/legenda usando função utilitária
+            if not audio_info:
+                audio_info = detect_audio_from_html(html_content)
+        
+        # Concatena HTML de todos os parágrafos para verificação independente de inglês e legenda
+        if all_paragraphs_html:
+            audio_html_content = ' '.join(all_paragraphs_html)
         
         # Extrai links magnet - busca TODOS os links <a> no post
         # A função _resolve_link automaticamente identifica e resolve links protegidos
@@ -255,7 +268,7 @@ class StarckScraper(BaseScraper):
                 # Salva release_title_magnet no Redis se encontrado (para reutilização por outros scrapers)
                 if not missing_dn and raw_release_title:
                     try:
-                        from utils.text.text_processing import save_release_title_to_redis
+                        from utils.text.storage import save_release_title_to_redis
                         save_release_title_to_redis(info_hash, raw_release_title)
                     except Exception:
                         pass
@@ -274,12 +287,18 @@ class StarckScraper(BaseScraper):
                     original_title, year, original_release_title, translated_title_html=translated_title if translated_title else None, raw_release_title_magnet=raw_release_title
                 )
                 
-                # Adiciona [Brazilian] se detectar DUAL/DUBLADO/NACIONAL, [Eng] se LEGENDADO, ou ambos se houver os dois
-                final_title = add_audio_tag_if_needed(standardized_title, original_release_title, info_hash=info_hash, skip_metadata=self._skip_metadata)
+                # Adiciona [Brazilian], [Eng] (via HTML) e/ou [Leg] conforme detectado
+                # NÃO adiciona DUAL/PORTUGUES/LEGENDADO ao release_title - apenas passa audio_info para a função de tags
+                # Passa também o HTML para verificação independente de inglês e legenda
+                # As tags são independentes: se tem "Idioma: Inglês" → [Eng], se tem "Legenda: PT-BR" → [Leg]
+                # SEMPRE passa o HTML se existir, mesmo que audio_info não tenha sido detectado
+                final_title = add_audio_tag_if_needed(standardized_title, original_release_title, info_hash=info_hash, skip_metadata=self._skip_metadata, audio_info_from_html=audio_info, audio_html_content=audio_html_content if audio_html_content else None)
                 
                 # Determina origem_audio_tag
                 origem_audio_tag = 'N/A'
-                if raw_release_title and ('dual' in raw_release_title.lower() or 'dublado' in raw_release_title.lower() or 'legendado' in raw_release_title.lower()):
+                if audio_info:
+                    origem_audio_tag = f'HTML da página (detect_audio_from_html)'
+                elif raw_release_title and ('dual' in raw_release_title.lower() or 'dublado' in raw_release_title.lower() or 'legendado' in raw_release_title.lower()):
                     origem_audio_tag = 'release_title_magnet'
                 elif missing_dn and info_hash:
                     origem_audio_tag = 'metadata (iTorrents.org) - usado durante processamento'

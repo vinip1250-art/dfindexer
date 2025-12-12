@@ -12,10 +12,10 @@ from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
 from utils.parsing.magnet_utils import process_trackers
-from utils.text.text_processing import (
-    find_year_from_text, find_sizes_from_text, STOP_WORDS,
-    add_audio_tag_if_needed, create_standardized_title, prepare_release_title
-)
+from utils.text.constants import STOP_WORDS
+from utils.text.utils import find_year_from_text, find_sizes_from_text
+from utils.text.audio import add_audio_tag_if_needed
+from utils.text.title_builder import create_standardized_title, prepare_release_title
 from app.config import Config
 from utils.logging import ScraperLogContext
 
@@ -319,19 +319,109 @@ class TfilmeScraper(BaseScraper):
                 translated_title = re.sub(r'<[^>]+>', '', translated_title)
                 translated_title = html.unescape(translated_title)
                 # Limpa o título traduzido
-                from utils.text.text_processing import clean_translated_title
+                from utils.text.cleaning import clean_translated_title
                 translated_title = clean_translated_title(translated_title)
                 break
         
         # Extrai ano e tamanhos
         year = ''
         sizes = []
-        for p in article.select('div.content p'):
-            text = p.get_text()
-            y = find_year_from_text(text, page_title)
-            if y:
-                year = y
-            sizes.extend(find_sizes_from_text(text))
+        audio_info = None  # Para detectar áudio/idioma do HTML
+        audio_html_content = ''  # Armazena HTML completo para verificação adicional
+        all_paragraphs_html = []  # Coleta HTML de todos os parágrafos
+        
+        # Extrai informações de idioma e legenda do HTML
+        # Busca em div.content primeiro (estrutura padrão do tfilme)
+        content_div = article.find('div', class_='content')
+        idioma = ''
+        legenda = ''
+        
+        if content_div:
+            content_html = str(content_div)
+            all_paragraphs_html.append(content_html)  # Adiciona HTML completo do content
+            
+            # Extrai Idioma
+            idioma_match = re.search(r'(?i)<b>Idioma:</b>\s*([^<]+?)(?:<br|</div|</p|$)', content_html)
+            if idioma_match:
+                idioma = idioma_match.group(1).strip()
+                # Remove entidades HTML
+                idioma = html.unescape(idioma)
+                idioma = re.sub(r'<[^>]+>', '', idioma).strip()
+            
+            # Extrai Legenda
+            legenda_match = re.search(r'(?i)<b>Legenda:</b>\s*([^<]+?)(?:<br|</div|</p|$)', content_html)
+            if legenda_match:
+                legenda = legenda_match.group(1).strip()
+                # Remove entidades HTML
+                legenda = html.unescape(legenda)
+                legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+            
+            # Se não encontrou com <b>, tenta sem tag bold
+            if not idioma:
+                idioma_match = re.search(r'(?i)Idioma\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|$)', content_html)
+                if idioma_match:
+                    idioma = idioma_match.group(1).strip()
+                    idioma = html.unescape(idioma)
+                    idioma = re.sub(r'<[^>]+>', '', idioma).strip()
+            
+            if not legenda:
+                legenda_match = re.search(r'(?i)Legenda\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|$)', content_html)
+                if legenda_match:
+                    legenda = legenda_match.group(1).strip()
+                    legenda = html.unescape(legenda)
+                    legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+        
+        # Determina audio_info baseado em Idioma e Legenda
+        if idioma or legenda:
+            idioma_lower = idioma.lower() if idioma else ''
+            legenda_lower = legenda.lower() if legenda else ''
+            
+            # Verifica se tem português no idioma (áudio)
+            has_portugues_audio = 'português' in idioma_lower or 'portugues' in idioma_lower
+            # Verifica se tem português na legenda
+            has_portugues_legenda = 'português' in legenda_lower or 'portugues' in legenda_lower
+            # Verifica se tem Inglês no idioma ou legenda
+            has_ingles = 'inglês' in idioma_lower or 'ingles' in idioma_lower or 'english' in idioma_lower or 'inglês' in legenda_lower or 'ingles' in legenda_lower or 'english' in legenda_lower
+            
+            # Lógica simplificada:
+            # Prioridade: Idioma com português primeiro (gera [Brazilian])
+            # Depois: Legenda com português ou Inglês em qualquer campo (gera [Leg])
+            if has_portugues_audio:
+                # Idioma tem português → gera [Brazilian]
+                audio_info = 'português'
+            elif has_portugues_legenda or has_ingles:
+                # Legenda tem português OU tem Inglês (em Idioma ou Legenda) → gera [Leg]
+                audio_info = 'legendado'
+        
+        # Se não encontrou em content, busca em parágrafos individuais
+        if not audio_info:
+            for p in article.select('div.content p'):
+                text = p.get_text()
+                html_content = str(p)
+                all_paragraphs_html.append(html_content)  # Coleta HTML de todos os parágrafos
+                y = find_year_from_text(text, page_title)
+                if y:
+                    year = y
+                sizes.extend(find_sizes_from_text(text))
+                
+                # Extrai informação de áudio/legenda usando função utilitária
+                if not audio_info:
+                    from utils.text.audio import detect_audio_from_html
+                    audio_info = detect_audio_from_html(html_content)
+        else:
+            # Se já encontrou audio_info, ainda precisa extrair ano e tamanhos
+            for p in article.select('div.content p'):
+                text = p.get_text()
+                html_content = str(p)
+                all_paragraphs_html.append(html_content)  # Coleta HTML de todos os parágrafos
+                y = find_year_from_text(text, page_title)
+                if y:
+                    year = y
+                sizes.extend(find_sizes_from_text(text))
+        
+        # Concatena HTML de todos os parágrafos para verificação independente de inglês e legenda
+        if all_paragraphs_html:
+            audio_html_content = ' '.join(all_paragraphs_html)
         
         # Extrai links magnet - busca TODOS os links <a> no conteúdo
         # A função _resolve_link automaticamente identifica e resolve links protegidos
@@ -434,7 +524,7 @@ class TfilmeScraper(BaseScraper):
                 # Salva release_title_magnet no Redis se encontrado (para reutilização por outros scrapers)
                 if not missing_dn and raw_release_title:
                     try:
-                        from utils.text.text_processing import save_release_title_to_redis
+                        from utils.text.storage import save_release_title_to_redis
                         save_release_title_to_redis(info_hash, raw_release_title)
                     except Exception:
                         pass
@@ -454,7 +544,14 @@ class TfilmeScraper(BaseScraper):
                 )
                 
                 # Adiciona [Brazilian] se detectar DUAL/DUBLADO/NACIONAL, [Eng] se LEGENDADO, ou ambos se houver os dois
-                final_title = add_audio_tag_if_needed(standardized_title, original_release_title, info_hash=info_hash, skip_metadata=self._skip_metadata)
+                final_title = add_audio_tag_if_needed(
+                    standardized_title, 
+                    original_release_title, 
+                    info_hash=info_hash, 
+                    skip_metadata=self._skip_metadata,
+                    audio_info_from_html=audio_info,
+                    audio_html_content=audio_html_content
+                )
                 
                 # Determina origem_audio_tag
                 origem_audio_tag = 'N/A'

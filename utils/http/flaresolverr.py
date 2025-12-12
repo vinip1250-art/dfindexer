@@ -24,6 +24,10 @@ _max_sessions = None
 # Lock para proteger validação/invalidação de sessões (evita race conditions)
 _session_validation_lock = threading.Lock()
 
+# Cache para evitar logs duplicados consecutivos
+_last_log_cache = {}
+_last_log_lock = threading.Lock()
+
 
 class FlareSolverrClient:
     def __init__(self, address: str):
@@ -240,6 +244,23 @@ class FlareSolverrClient:
             logger.debug(f"FlareSolverr: erro ao validar sessão (assumindo válida): {type(e).__name__}")
             return True
     
+    def _should_log(self, log_key: str) -> bool:
+        """Verifica se deve fazer log (evita duplicados - apenas uma vez por base_url)"""
+        global _last_log_cache, _last_log_lock
+        with _last_log_lock:
+            current_time = time.time()
+            # Se a mesma mensagem foi logada há menos de 60 segundos, não loga novamente
+            # Isso garante que aparece apenas uma vez por consulta (mesmo que a consulta demore)
+            if log_key in _last_log_cache:
+                if current_time - _last_log_cache[log_key] < 60:
+                    return False
+            _last_log_cache[log_key] = current_time
+            # Limpa cache antigo (mais de 5 minutos) para evitar crescimento infinito
+            keys_to_remove = [k for k, v in _last_log_cache.items() if current_time - v > 300]
+            for k in keys_to_remove:
+                _last_log_cache.pop(k, None)
+            return True
+    
     def get_or_create_session(self, base_url: str, skip_redis: bool = False) -> Optional[str]:
         # Obtém ou cria sessão FlareSolverr (Redis primeiro, memória se Redis não disponível)
         # Protege contra race conditions quando múltiplos scrapers acessam a mesma sessão
@@ -252,14 +273,16 @@ class FlareSolverrClient:
                 cached = self.redis.get(session_key)
                 if cached:
                     session_id = cached.decode('utf-8')
-                    logger.debug(f"FlareSolverr: sessão encontrada no cache para {base_url} (ID: {session_id[:20]}...)")
                     # Valida sessão com lock para evitar race conditions
                     with _session_validation_lock:
                         # Verifica novamente se ainda existe no Redis (pode ter sido removido por outro scraper)
                         cached_again = self.redis.get(session_key)
                         if cached_again and cached_again.decode('utf-8') == session_id:
                             if self._validate_session(session_id):
-                                logger.debug(f"FlareSolverr: sessão reutilizada para {base_url} (ID: {session_id[:20]}...)")
+                                # Log apenas uma vez por base_url (não por session_id, pois pode mudar)
+                                log_key = f"reused_{base_url}"
+                                if self._should_log(log_key):
+                                    logger.info(f"FlareSolverr: sessão encontrada e reutilizada para {base_url} (ID: {session_id[:20]}...)")
                                 return session_id
                             else:
                                 # Sessão inválida, remove do cache apenas se ainda for a mesma sessão

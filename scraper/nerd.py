@@ -12,10 +12,10 @@ from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
 from utils.parsing.magnet_utils import process_trackers
-from utils.text.text_processing import (
-    find_year_from_text, find_sizes_from_text, STOP_WORDS,
-    detect_audio_from_html, add_audio_tag_if_needed, create_standardized_title, prepare_release_title
-)
+from utils.text.constants import STOP_WORDS
+from utils.text.utils import find_year_from_text, find_sizes_from_text
+from utils.text.audio import detect_audio_from_html, add_audio_tag_if_needed
+from utils.text.title_builder import create_standardized_title, prepare_release_title
 from app.config import Config
 from utils.logging import ScraperLogContext
 
@@ -345,16 +345,20 @@ class NerdScraper(BaseScraper):
             # Busca por "Baixar Título:" ou "Baixar Filme:"
             if re.search(r'(?i)Baixar\s+(?:T[íi]tulo|Filme)\s*:?', poster_html):
                 # Tenta extrair do HTML primeiro (mais preciso)
-                html_match = re.search(r'(?i)Baixar\s+(?:T[íi]tulo|Filme)\s*:?\s*(.*?)(?:<br|</span|</p|</div|</b|$)', poster_html, re.DOTALL)
+                # Para antes de tags HTML ou campos como "Titulo Original:", "IMDb:", etc.
+                html_match = re.search(r'(?i)Baixar\s+(?:T[íi]tulo|Filme)\s*:?\s*(.*?)(?:<br|</span|</p|</div|</b|T[íi]tulo\s+Original:|IMDb:|Lançamento:|Gênero:|Duração:|$)', poster_html, re.DOTALL)
                 if html_match:
                     html_text = html_match.group(1)
                     html_text = re.sub(r'<[^>]+>', '', html_text)
+                    # Remove campos que podem ter sido capturados
+                    html_text = re.sub(r'(?i).*?T[íi]tulo\s+Original:.*$', '', html_text)
+                    html_text = re.sub(r'(?i).*?IMDb:.*$', '', html_text)
                     html_text = html_text.strip()
                     if html_text:
                         translated_title = html_text
                 else:
-                    # Fallback: extrai do texto
-                    text_match = re.search(r'(?i)Baixar\s+(?:T[íi]tulo|Filme)\s*:?\s*(.*)', poster_text)
+                    # Fallback: extrai do texto, para antes de "Titulo Original:", "IMDb:", etc.
+                    text_match = re.search(r'(?i)Baixar\s+(?:T[íi]tulo|Filme)\s*:?\s*(.+?)(?:\s+T[íi]tulo\s+Original:|IMDb:|Lançamento:|Gênero:|Duração:|$)', poster_text)
                     if text_match:
                         translated_title = text_match.group(1).strip()
         
@@ -367,16 +371,20 @@ class NerdScraper(BaseScraper):
                 # Busca por "Baixar Título:" ou "Baixar Filme:"
                 if re.search(r'(?i)Baixar\s+(?:T[íi]tulo|Filme)\s*:?', elem_html):
                     # Tenta extrair do HTML primeiro (mais preciso)
-                    html_match = re.search(r'(?i)Baixar\s+(?:T[íi]tulo|Filme)\s*:?\s*(.*?)(?:<br|</span|</p|</div|</b|$)', elem_html, re.DOTALL)
+                    # Para antes de tags HTML ou campos como "Titulo Original:", "IMDb:", etc.
+                    html_match = re.search(r'(?i)Baixar\s+(?:T[íi]tulo|Filme)\s*:?\s*(.*?)(?:<br|</span|</p|</div|</b|T[íi]tulo\s+Original:|IMDb:|Lançamento:|Gênero:|Duração:|$)', elem_html, re.DOTALL)
                     if html_match:
                         html_text = html_match.group(1)
                         html_text = re.sub(r'<[^>]+>', '', html_text)
+                        # Remove campos que podem ter sido capturados
+                        html_text = re.sub(r'(?i).*?T[íi]tulo\s+Original:.*$', '', html_text)
+                        html_text = re.sub(r'(?i).*?IMDb:.*$', '', html_text)
                         html_text = html_text.strip()
                         if html_text:
                             translated_title = html_text
                     else:
-                        # Fallback: extrai do texto
-                        text_match = re.search(r'(?i)Baixar\s+(?:T[íi]tulo|Filme)\s*:?\s*(.*)', elem_text)
+                        # Fallback: extrai do texto, para antes de "Titulo Original:", "IMDb:", etc.
+                        text_match = re.search(r'(?i)Baixar\s+(?:T[íi]tulo|Filme)\s*:?\s*(.+?)(?:\s+T[íi]tulo\s+Original:|IMDb:|Lançamento:|Gênero:|Duração:|$)', elem_text)
                         if text_match:
                             translated_title = text_match.group(1).strip()
                     
@@ -427,13 +435,24 @@ class NerdScraper(BaseScraper):
             translated_title = re.sub(r'\s+', ' ', translated_title).strip()
             
             # Para antes de outros campos (Gênero, Duração, etc.)
-            for stop in ['\n', 'Gênero:', 'Duração:', 'Ano:', 'IMDb:', 'Título Original:']:
-                if stop in translated_title:
-                    translated_title = translated_title.split(stop)[0].strip()
+            # Usa regex para encontrar qualquer variação (com ou sem acento, com ou sem espaço antes)
+            stop_patterns = [
+                r'\n',
+                r'Gênero:',
+                r'Duração:',
+                r'Ano:',
+                r'IMDb:',
+                r'T[íi]tulo\s+Original:',
+                r'Lançamento',
+            ]
+            for pattern in stop_patterns:
+                match = re.search(pattern, translated_title, re.IGNORECASE)
+                if match:
+                    translated_title = translated_title[:match.start()].strip()
                     break
             
             if translated_title:
-                from utils.text.text_processing import clean_translated_title
+                from utils.text.cleaning import clean_translated_title
                 translated_title = clean_translated_title(translated_title)
         
         # Fallback: usa título da página se não encontrou título original
@@ -444,11 +463,72 @@ class NerdScraper(BaseScraper):
         year = ''
         sizes = []
         imdb = ''
-        audio_info = ''  # Para detectar "Áudio: Português", "Multi-Áudio", "Inglês"
+        audio_info = None  # Para detectar "Áudio: Português", "Multi-Áudio", "Inglês"
+        audio_html_content = ''  # Armazena HTML completo para verificação adicional
+        all_paragraphs_html = []  # Coleta HTML de todos os parágrafos
         
+        # Extrai informações de idioma e legenda do HTML
+        # Busca em content_div primeiro (estrutura padrão do nerd)
+        content_html = str(content_div)
+        idioma = ''
+        legenda = ''
+        
+        # Extrai Idioma
+        idioma_match = re.search(r'(?i)<b>Idioma:</b>\s*([^<]+?)(?:<br|</div|</p|$)', content_html)
+        if idioma_match:
+            idioma = idioma_match.group(1).strip()
+            idioma = html.unescape(idioma)
+            idioma = re.sub(r'<[^>]+>', '', idioma).strip()
+        
+        # Extrai Legenda
+        legenda_match = re.search(r'(?i)<b>Legenda:</b>\s*([^<]+?)(?:<br|</div|</p|$)', content_html)
+        if legenda_match:
+            legenda = legenda_match.group(1).strip()
+            legenda = html.unescape(legenda)
+            legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+        
+        # Se não encontrou com <b>, tenta sem tag bold
+        if not idioma:
+            idioma_match = re.search(r'(?i)Idioma\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|$)', content_html)
+            if idioma_match:
+                idioma = idioma_match.group(1).strip()
+                idioma = html.unescape(idioma)
+                idioma = re.sub(r'<[^>]+>', '', idioma).strip()
+        
+        if not legenda:
+            legenda_match = re.search(r'(?i)Legenda\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|$)', content_html)
+            if legenda_match:
+                legenda = legenda_match.group(1).strip()
+                legenda = html.unescape(legenda)
+                legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+        
+        # Determina audio_info baseado em Idioma e Legenda
+        if idioma or legenda:
+            idioma_lower = idioma.lower() if idioma else ''
+            legenda_lower = legenda.lower() if legenda else ''
+            
+            # Verifica se tem português no idioma (áudio)
+            has_portugues_audio = 'português' in idioma_lower or 'portugues' in idioma_lower
+            # Verifica se tem português na legenda
+            has_portugues_legenda = 'português' in legenda_lower or 'portugues' in legenda_lower
+            # Verifica se tem Inglês no idioma ou legenda
+            has_ingles = 'inglês' in idioma_lower or 'ingles' in idioma_lower or 'english' in idioma_lower or 'inglês' in legenda_lower or 'ingles' in legenda_lower or 'english' in legenda_lower
+            
+            # Lógica simplificada:
+            # Prioridade: Idioma com português primeiro (gera [Brazilian])
+            # Depois: Legenda com português ou Inglês em qualquer campo (gera [Leg])
+            if has_portugues_audio:
+                # Idioma tem português → gera [Brazilian]
+                audio_info = 'português'
+            elif has_portugues_legenda or has_ingles:
+                # Legenda tem português OU tem Inglês (em Idioma ou Legenda) → gera [Leg]
+                audio_info = 'legendado'
+        
+        # Se não encontrou em content, busca em parágrafos individuais
         for p in content_div.select('p, span, div'):
             text = p.get_text()
             html_content = str(p)
+            all_paragraphs_html.append(html_content)  # Coleta HTML de todos os parágrafos
             
             y = find_year_from_text(text, original_title or page_title)
             if y:
@@ -456,7 +536,7 @@ class NerdScraper(BaseScraper):
             
             sizes.extend(find_sizes_from_text(html_content))
             
-            # Extrai informação de áudio usando função utilitária
+            # Extrai informação de áudio usando função utilitária (fallback)
             if not audio_info:
                 audio_info = detect_audio_from_html(html_content)
             
@@ -494,6 +574,12 @@ class NerdScraper(BaseScraper):
                             if has_imdb_label:
                                 break
                             continue
+        
+        # Concatena HTML de todos os parágrafos para verificação independente de inglês e legenda
+        if all_paragraphs_html:
+            audio_html_content = ' '.join(all_paragraphs_html)
+        elif content_html:
+            audio_html_content = content_html
         
         # Extrai links magnet - busca TODOS os links <a> no documento
         # A função _resolve_link automaticamente identifica e resolve links protegidos
@@ -555,7 +641,7 @@ class NerdScraper(BaseScraper):
                 # Salva release_title_magnet no Redis se encontrado (para reutilização por outros scrapers)
                 if not missing_dn and raw_release_title:
                     try:
-                        from utils.text.text_processing import save_release_title_to_redis
+                        from utils.text.storage import save_release_title_to_redis
                         save_release_title_to_redis(info_hash, raw_release_title)
                     except Exception:
                         pass
@@ -576,7 +662,14 @@ class NerdScraper(BaseScraper):
                 
                 # Adiciona [Brazilian], [Eng] (via HTML) e/ou [Leg] conforme detectado
                 # NÃO adiciona DUAL/PORTUGUES/LEGENDADO ao release_title - apenas passa audio_info para a função de tags
-                final_title = add_audio_tag_if_needed(standardized_title, original_release_title, info_hash=info_hash, skip_metadata=self._skip_metadata, audio_info_from_html=audio_info)
+                final_title = add_audio_tag_if_needed(
+                    standardized_title, 
+                    original_release_title, 
+                    info_hash=info_hash, 
+                    skip_metadata=self._skip_metadata,
+                    audio_info_from_html=audio_info,
+                    audio_html_content=audio_html_content
+                )
                 
                 # Determina origem_audio_tag
                 origem_audio_tag = 'N/A'

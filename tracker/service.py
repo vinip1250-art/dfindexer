@@ -174,7 +174,7 @@ class TrackerService:
                 if peers:
                     leechers, seeders = peers
                     if seeders or leechers:
-                        logger.debug("Tracker %s: %s (S:%d L:%d)", tracker, info_hash[:16], seeders, leechers)
+                        logger.debug("Tracker %s: %s (S:%d L:%d)", tracker, info_hash, seeders, leechers)
                         return leechers, seeders
                     if best is None:
                         best = (leechers, seeders)

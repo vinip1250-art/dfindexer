@@ -26,7 +26,7 @@ _times_lock = threading.Lock()
 def get_metadata_semaphore():
     global _metadata_semaphore, _current_limit
     
-    max_concurrent = Config.METADATA_MAX_CONCURRENT if hasattr(Config, 'METADATA_MAX_CONCURRENT') else 32
+    max_concurrent = Config.METADATA_MAX_CONCURRENT if hasattr(Config, 'METADATA_MAX_CONCURRENT') else 128
     
     # Se o semáforo não existe ou o limite mudou, recria
     if _metadata_semaphore is None or _current_limit != max_concurrent:

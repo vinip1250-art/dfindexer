@@ -52,11 +52,34 @@ class Config:
     
     EMPTY_QUERY_MAX_LINKS: int = int(os.getenv('EMPTY_QUERY_MAX_LINKS', '15'))
     
-    # Concorrência
-    TRACKER_MAX_WORKERS: int = int(os.getenv('TRACKER_MAX_WORKERS', '20'))  # Workers globais para trackers
-    METADATA_MAX_CONCURRENT: int = int(os.getenv('METADATA_MAX_CONCURRENT', '64'))  # Limite global de requisições de metadata simultâneas (aumentado de 32 para 64)
-    FLARESOLVERR_MAX_SESSIONS: int = int(os.getenv('FLARESOLVERR_MAX_SESSIONS', '15'))  # Limite de sessões FlareSolverr simultâneas
+    # Concorrência (valores fixos - não configuráveis via ENV)
+    TRACKER_MAX_WORKERS: int = 30  # Workers globais para trackers
+    METADATA_MAX_CONCURRENT: int = 128  # Limite global de requisições de metadata simultâneas
+    FLARESOLVERR_MAX_SESSIONS: int = 15  # Limite de sessões FlareSolverr simultâneas
+    SCRAPER_MAX_WORKERS: int = 16  # Workers para processamento paralelo de links
     
-    # Timeouts
-    HTTP_REQUEST_TIMEOUT: int = int(os.getenv('HTTP_REQUEST_TIMEOUT', '30'))  # Timeout padrão em segundos para requisições HTTP de páginas
+    # Timeouts (valores fixos - não configuráveis via ENV)
+    HTTP_REQUEST_TIMEOUT: int = 45  # Timeout padrão em segundos para requisições HTTP de páginas
+    
+    # Connection Pool (valores fixos - não configuráveis via ENV)
+    HTTP_POOL_CONNECTIONS: int = 50  # Número de connection pools
+    HTTP_POOL_MAXSIZE: int = 100  # Tamanho máximo de cada pool
+    
+    # Cache Local (valores fixos - não configuráveis via ENV)
+    LOCAL_CACHE_ENABLED: bool = True  # Habilita cache HTTP local em memória
+    LOCAL_CACHE_TTL: int = 30  # TTL do cache local em segundos (30s para evitar requisições duplicadas)
+    
+    # Tracker Scraping (valor fixo - não configurável via ENV)
+    TRACKER_SCRAPING_ENABLED: bool = True  # Habilita scraping de trackers
+    
+    # Text Processing Constants
+    MAX_QUERY_LENGTH: int = int(os.getenv('MAX_QUERY_LENGTH', '200'))  # Tamanho máximo de query de busca
+    MAX_EPISODE_NUMBER: int = 99  # Número máximo de episódio válido
+    MAX_EPISODE_DIFF: int = 20  # Diferença máxima entre episódios consecutivos
+    INFO_HASH_LENGTH: int = 40  # Tamanho esperado de info_hash (SHA1)
+    RELEASE_TITLE_CACHE_TTL: int = 7 * 24 * 3600  # 7 dias em segundos
+    
+    # Retry Configuration
+    HTTP_RETRY_MAX_ATTEMPTS: int = int(os.getenv('HTTP_RETRY_MAX_ATTEMPTS', '3'))  # Número máximo de tentativas
+    HTTP_RETRY_BACKOFF_BASE: float = float(os.getenv('HTTP_RETRY_BACKOFF_BASE', '1.0'))  # Base do backoff exponencial (segundos)
     

@@ -42,18 +42,18 @@ class IndexerService:
     def search(self, scraper_type: str, query: str, use_flaresolverr: bool = False, filter_results: bool = False) -> tuple[List[Dict], Optional[Dict]]:
         scraper = create_scraper(scraper_type, use_flaresolverr=use_flaresolverr)
         
+        # Cria filtro se necessário
         filter_func = None
         if filter_results and query:
             filter_func = QueryFilter.create_filter(query)
         
-        # Obtém estatísticas ANTES de processar (garante que não serão sobrescritas)
-        filter_stats = None
-        
+        # Busca com filtro se filter_results=True, caso contrário sem filtro
         torrents = scraper.search(query, filter_func=filter_func)
         
-        # Obtém estatísticas imediatamente após o enriquecimento (evita race condition)
+        # Calcula estatísticas do filtro
+        filter_stats = None
         if hasattr(scraper, '_enricher') and hasattr(scraper._enricher, '_last_filter_stats'):
-            # Faz cópia das estatísticas para evitar que sejam sobrescritas por outras requisições
+            # Usa estatísticas do enricher (já calculadas durante o enriquecimento)
             stats = scraper._enricher._last_filter_stats
             if stats:
                 filter_stats = {
@@ -61,6 +61,18 @@ class IndexerService:
                     'filtered': stats.get('filtered', 0),
                     'approved': stats.get('approved', 0),
                     'scraper_name': stats.get('scraper_name', '')
+                }
+        elif filter_func and torrents:
+            # Fallback: calcula estatísticas manualmente se não foram calculadas pelo enricher
+            total_before_filter = len(torrents)
+            filtered_count = sum(1 for t in torrents if not filter_func(t))
+            approved_count = total_before_filter - filtered_count
+            
+            filter_stats = {
+                'total': total_before_filter,
+                'filtered': filtered_count,
+                'approved': approved_count,
+                'scraper_name': scraper.SCRAPER_TYPE if hasattr(scraper, 'SCRAPER_TYPE') else ''
                 }
         
         self.processor.sanitize_torrents(torrents)

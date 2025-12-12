@@ -11,10 +11,10 @@ from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
 from utils.parsing.magnet_utils import process_trackers
-from utils.text.text_processing import (
-    find_year_from_text, find_sizes_from_text, STOP_WORDS,
-    add_audio_tag_if_needed, create_standardized_title, prepare_release_title
-)
+from utils.text.constants import STOP_WORDS
+from utils.text.utils import find_year_from_text, find_sizes_from_text
+from utils.text.audio import add_audio_tag_if_needed
+from utils.text.title_builder import create_standardized_title, prepare_release_title
 from utils.logging import format_error, format_link_preview
 
 logger = logging.getLogger(__name__)
@@ -193,8 +193,10 @@ class ComandScraper(BaseScraper):
             # Padrão 1: HTML com tags <strong>Título Original</strong>: texto<br />
             # Aceita "Título" (com acento) ou "Titulo" (sem acento)
             # Exemplo: <strong>Título Original</strong>: Rogue One<br />
+            # Para antes de <span, <br, </p, </strong, ou palavras-chave
+            # Captura até encontrar <span, <br, </p, </strong ou fim da string
             title_original_match = re.search(
-                r'<strong>T[íi]tulo Original</strong>\s*[:\s]\s*(?:<br\s*/?>)?\s*([^<]+?)(?:<br|</p|</strong|$)',
+                r'<strong>T[íi]tulo Original</strong>\s*[:\s]\s*(?:<br\s*/?>)?\s*([^<]+?)(?=<span|<br|</p|</strong|Gênero|Sinopse|Lançamento|Duração|Formato|Qualidade|Áudio|Audio|Legenda|Tamanho|IMDb|TEMPORADA|$)',
                 html_content,
                 re.IGNORECASE | re.DOTALL
             )
@@ -202,18 +204,29 @@ class ComandScraper(BaseScraper):
                 original_title = title_original_match.group(1).strip()
                 # Remove tags HTML restantes que possam ter sido capturadas
                 original_title = re.sub(r'<[^>]+>', '', original_title).strip()
+                # Decodifica entidades HTML (&#8211; vira –, etc.)
                 original_title = html.unescape(original_title)
                 # Remove quebras de linha e espaços extras
                 original_title = re.sub(r'\s+', ' ', original_title).strip()
-                # Remove caracteres especiais do final (mas mantém dois pontos no meio)
-                original_title = original_title.rstrip(' .,:;-')
+                # Para antes de encontrar palavras de parada (Sinopse, Gênero, etc.)
+                stop_words = ['Sinopse', 'Gênero', 'Lançamento', 'Duração', 'Formato', 'Qualidade', 'Áudio', 'Audio', 'Legenda', 'Tamanho', 'IMDb', 'Título Traduzido', 'TEMPORADA', 'Temporada']
+                for stop_word in stop_words:
+                    if stop_word in original_title:
+                        idx = original_title.index(stop_word)
+                        original_title = original_title[:idx].strip()
+                        break
+                # Limita o tamanho máximo do título (200 caracteres)
+                if len(original_title) > 200:
+                    original_title = original_title[:200].strip()
+                # Remove caracteres especiais do final (mas mantém dois pontos e traços no meio)
+                original_title = original_title.rstrip(' .,:;')
             
             # Padrão 2: HTML com tags <b>Título Original:</b> texto<br />
             # Aceita "Título" (com acento) ou "Titulo" (sem acento)
             # Exemplo: <b>Título Original:</b> The Witcher: Blood Origin<br />
             if not original_title:
                 title_original_match = re.search(
-                    r'<b>T[íi]tulo Original[:\s]*</b>\s*(?:<br\s*/?>)?\s*([^<]+?)(?:<br|</p|</b|<strong|$)',
+                    r'<b>T[íi]tulo Original[:\s]*</b>\s*(?:<br\s*/?>)?\s*([^<]+?)(?:<span|<br|</p|</b|<strong|Gênero|Sinopse|Lançamento|Duração|Formato|Qualidade|Áudio|Audio|Legenda|Tamanho|IMDb|TEMPORADA|$)',
                     html_content,
                     re.IGNORECASE | re.DOTALL
                 )
@@ -221,17 +234,28 @@ class ComandScraper(BaseScraper):
                     original_title = title_original_match.group(1).strip()
                     # Remove tags HTML restantes que possam ter sido capturadas
                     original_title = re.sub(r'<[^>]+>', '', original_title).strip()
+                    # Decodifica entidades HTML
                     original_title = html.unescape(original_title)
                     # Remove quebras de linha e espaços extras
                     original_title = re.sub(r'\s+', ' ', original_title).strip()
-                    # Remove caracteres especiais do final (mas mantém dois pontos no meio)
-                    original_title = original_title.rstrip(' .,:;-')
+                    # Para antes de encontrar palavras de parada (Sinopse, Gênero, etc.)
+                    stop_words = ['Sinopse', 'Gênero', 'Lançamento', 'Duração', 'Formato', 'Qualidade', 'Áudio', 'Audio', 'Legenda', 'Tamanho', 'IMDb', 'Título Traduzido', 'TEMPORADA', 'Temporada']
+                    for stop_word in stop_words:
+                        if stop_word in original_title:
+                            idx = original_title.index(stop_word)
+                            original_title = original_title[:idx].strip()
+                            break
+                    # Limita o tamanho máximo do título (200 caracteres)
+                    if len(original_title) > 200:
+                        original_title = original_title[:200].strip()
+                    # Remove caracteres especiais do final (mas mantém dois pontos e traços no meio)
+                    original_title = original_title.rstrip(' .,:;')
             
             # Padrão 3: HTML sem tag <b> inicial, mas com </b> antes do texto
             # Exemplo: Titulo Original:</b> One Battle After Another<br />
             if not original_title:
                 title_original_match = re.search(
-                    r'T[íi]tulo Original[:\s]*</b>\s*(?:<br\s*/?>)?\s*([^<]+?)(?:<br|</p|</b|<strong|$)',
+                    r'T[íi]tulo Original[:\s]*</b>\s*(?:<br\s*/?>)?\s*([^<]+?)(?:<br|</p|</b|<strong|Gênero|Sinopse|Lançamento|Duração|Formato|Qualidade|Áudio|Audio|Legenda|Tamanho|IMDb|$)',
                     html_content,
                     re.IGNORECASE | re.DOTALL
                 )
@@ -240,6 +264,13 @@ class ComandScraper(BaseScraper):
                     original_title = re.sub(r'<[^>]+>', '', original_title).strip()
                     original_title = html.unescape(original_title)
                     original_title = re.sub(r'\s+', ' ', original_title).strip()
+                    # Para antes de encontrar palavras de parada (Sinopse, Gênero, etc.)
+                    stop_words = ['Sinopse', 'Gênero', 'Lançamento', 'Duração', 'Formato', 'Qualidade', 'Áudio', 'Audio', 'Legenda', 'Tamanho', 'IMDb', 'Título Traduzido']
+                    for stop_word in stop_words:
+                        if stop_word in original_title:
+                            idx = original_title.index(stop_word)
+                            original_title = original_title[:idx].strip()
+                            break
                     original_title = original_title.rstrip(' .,:;-')
             
             # Padrão 4: Busca usando BeautifulSoup para encontrar o texto após "Título Original"
@@ -261,22 +292,47 @@ class ComandScraper(BaseScraper):
                                 original_title = re.sub(r'<[^>]+>', '', original_title).strip()
                                 original_title = html.unescape(original_title)
                         if original_title:
+                            original_title = re.sub(r'<[^>]+>', '', original_title).strip()
+                            # Decodifica entidades HTML
+                            original_title = html.unescape(original_title)
                             original_title = re.sub(r'\s+', ' ', original_title).strip()
-                            original_title = original_title.rstrip(' .,:;-')
+                            # Para antes de encontrar palavras de parada (Sinopse, Gênero, etc.)
+                            stop_words = ['Sinopse', 'Gênero', 'Lançamento', 'Duração', 'Formato', 'Qualidade', 'Áudio', 'Audio', 'Legenda', 'Tamanho', 'IMDb', 'Título Traduzido', 'TEMPORADA', 'Temporada']
+                            for stop_word in stop_words:
+                                if stop_word in original_title:
+                                    idx = original_title.index(stop_word)
+                                    original_title = original_title[:idx].strip()
+                                    break
+                            # Limita o tamanho máximo do título (200 caracteres)
+                            if len(original_title) > 200:
+                                original_title = original_title[:200].strip()
+                            original_title = original_title.rstrip(' .,:;')
                             break
             
             # Padrão 5: Texto puro (fallback final)
             if not original_title:
                 content_text = entry_content.get_text()
                 title_original_match = re.search(
-                    r'T[íi]tulo Original[:\s]+([^\n]+?)(?:\n|$)',
+                    r'T[íi]tulo Original[:\s]+([^\n]+?)(?:\n|Sinopse|Gênero|Lançamento|Duração|Formato|Qualidade|Áudio|Audio|Legenda|Tamanho|IMDb|TEMPORADA|Temporada|$)',
                     content_text,
                     re.IGNORECASE
                 )
                 if title_original_match:
                     original_title = title_original_match.group(1).strip()
-                    # Remove caracteres especiais do final
-                    original_title = original_title.rstrip(' .,:;-')
+                    # Decodifica entidades HTML
+                    original_title = html.unescape(original_title)
+                    # Para antes de encontrar palavras de parada (Sinopse, Gênero, etc.)
+                    stop_words = ['Sinopse', 'Gênero', 'Lançamento', 'Duração', 'Formato', 'Qualidade', 'Áudio', 'Audio', 'Legenda', 'Tamanho', 'IMDb', 'Título Traduzido', 'TEMPORADA', 'Temporada']
+                    for stop_word in stop_words:
+                        if stop_word in original_title:
+                            idx = original_title.index(stop_word)
+                            original_title = original_title[:idx].strip()
+                            break
+                    # Limita o tamanho máximo do título (200 caracteres)
+                    if len(original_title) > 200:
+                        original_title = original_title[:200].strip()
+                    # Remove caracteres especiais do final (mas mantém dois pontos e traços no meio)
+                    original_title = original_title.rstrip(' .,:;')
             
             # Busca ano - tenta múltiplos padrões
             # Padrão 1: HTML com link <a>2025</a>
@@ -380,7 +436,7 @@ class ComandScraper(BaseScraper):
                 translated_title = re.sub(r'\s+', ' ', translated_title).strip()
                 translated_title = translated_title.rstrip(' .,:;-')
                 # Limpa usando função auxiliar
-                from utils.text.text_processing import clean_translated_title
+                from utils.text.cleaning import clean_translated_title
                 translated_title = clean_translated_title(translated_title)
             
             # Padrão 2: HTML com tags <b>Título Traduzido:</b> texto<br />
@@ -397,7 +453,7 @@ class ComandScraper(BaseScraper):
                     translated_title = re.sub(r'\s+', ' ', translated_title).strip()
                     translated_title = translated_title.rstrip(' .,:;-')
                     # Limpa usando função auxiliar
-                    from utils.text.text_processing import clean_translated_title
+                    from utils.text.cleaning import clean_translated_title
                     translated_title = clean_translated_title(translated_title)
             
             # Padrão 3: Texto puro (fallback)
@@ -417,12 +473,182 @@ class ComandScraper(BaseScraper):
             # Remove qualquer HTML que possa ter sobrado
             translated_title = re.sub(r'<[^>]+>', '', translated_title)
             translated_title = html.unescape(translated_title)
-            from utils.text.text_processing import clean_translated_title
+            from utils.text.cleaning import clean_translated_title
             translated_title = clean_translated_title(translated_title)
         
         # Se não encontrou título original, usa o título da página
         if not original_title:
             original_title = page_title
+        
+        # Extrai informações de áudio e legenda do HTML
+        audio_info = None  # Para detectar áudio/idioma do HTML
+        audio_html_content = ''  # Armazena HTML completo para verificação adicional
+        all_paragraphs_html = []  # Coleta HTML de todos os parágrafos
+        
+        audio_text = ''
+        legenda = ''
+        
+        if entry_content:
+            # Primeiro tenta no HTML completo do entry_content
+            content_html = str(entry_content)
+            all_paragraphs_html.append(content_html)
+            
+            # Extrai Áudio/Idioma - busca primeiro no HTML completo
+            # O site pode usar "Áudio:" ou "Idioma:" para indicar o idioma do áudio
+            audio_patterns = [
+                r'(?i)Áudio\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|</span|Legenda|Canais|Fansub|Qualidade|Duração|Formato|Vídeo|Nota|Tamanho|IMDb|Status|$)',
+                r'(?i)Audio\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|</span|Legenda|Canais|Fansub|Qualidade|Duração|Formato|Vídeo|Nota|Tamanho|IMDb|Status|$)',
+                r'(?i)Idioma\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|</span|Legenda|Canais|Fansub|Qualidade|Duração|Formato|Vídeo|Nota|Tamanho|IMDb|Status|$)',
+                r'(?i)<[^>]*>Áudio\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|Legenda|$)',
+                r'(?i)<[^>]*>Audio\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|Legenda|$)',
+                r'(?i)<[^>]*>Idioma\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|Legenda|$)',
+            ]
+            
+            for pattern in audio_patterns:
+                audio_match = re.search(pattern, content_html, re.DOTALL)
+                if audio_match:
+                    audio_text = audio_match.group(1).strip()
+                    # Remove entidades HTML e tags
+                    audio_text = html.unescape(audio_text)
+                    audio_text = re.sub(r'<[^>]+>', '', audio_text).strip()
+                    # Remove espaços extras e normaliza
+                    audio_text = re.sub(r'\s+', ' ', audio_text).strip()
+                    # Para antes de encontrar palavras de parada
+                    stop_words = ['Legenda', 'Canais', 'Fansub', 'Qualidade', 'Duração', 'Formato', 'Vídeo', 'Nota', 'Tamanho', 'IMDb', 'Status']
+                    for stop_word in stop_words:
+                        if stop_word in audio_text:
+                            idx = audio_text.index(stop_word)
+                            audio_text = audio_text[:idx].strip()
+                            break
+                    if audio_text:
+                        break
+            
+            # Se não encontrou no HTML completo, busca nos elementos individuais
+            if not audio_text:
+                for elem in entry_content.find_all(['p', 'span', 'div', 'strong', 'em', 'li', 'b']):
+                    elem_html = str(elem)
+                    all_paragraphs_html.append(elem_html)
+                    
+                    for pattern in audio_patterns:
+                        audio_match = re.search(pattern, elem_html, re.DOTALL)
+                        if audio_match:
+                            audio_text = audio_match.group(1).strip()
+                            # Remove entidades HTML e tags
+                            audio_text = html.unescape(audio_text)
+                            audio_text = re.sub(r'<[^>]+>', '', audio_text).strip()
+                            # Remove espaços extras e normaliza
+                            audio_text = re.sub(r'\s+', ' ', audio_text).strip()
+                            # Para antes de encontrar palavras de parada
+                            stop_words = ['Legenda', 'Canais', 'Fansub', 'Qualidade', 'Duração', 'Formato', 'Vídeo', 'Nota', 'Tamanho', 'IMDb', 'Status']
+                            for stop_word in stop_words:
+                                if stop_word in audio_text:
+                                    idx = audio_text.index(stop_word)
+                                    audio_text = audio_text[:idx].strip()
+                                    break
+                            if audio_text:
+                                break
+                    if audio_text:
+                        break
+            
+            # Extrai Legenda - busca primeiro no HTML completo
+            legenda_patterns = [
+                r'(?i)Legendas?\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|</span|Canais|Fansub|Qualidade|Duração|Formato|Vídeo|Nota|Tamanho|IMDb|Áudio|Audio|Status|$)',
+                r'(?i)<[^>]*>Legendas?\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|Canais|Fansub|Qualidade|$)',
+                r'(?i)<strong>Legendas?\s*:\s*</strong>\s*(?:<br\s*/?>)?\s*\n\s*([^<\n\r]+?)(?:<br|</div|</p|</strong|Nota|Tamanho|$)',
+            ]
+            
+            for pattern in legenda_patterns:
+                legenda_match = re.search(pattern, content_html, re.DOTALL)
+                if legenda_match:
+                    legenda = legenda_match.group(1).strip()
+                    # Remove entidades HTML e tags
+                    legenda = html.unescape(legenda)
+                    legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+                    # Remove espaços extras e normaliza
+                    legenda = re.sub(r'\s+', ' ', legenda).strip()
+                    # Para antes de encontrar palavras de parada
+                    stop_words = ['Nota', 'Tamanho', 'IMDb', 'Vídeo', 'Áudio', 'Audio', 'Canais', 'Fansub', 'Qualidade', 'Duração', 'Formato', 'Status']
+                    for stop_word in stop_words:
+                        if stop_word in legenda:
+                            idx = legenda.index(stop_word)
+                            legenda = legenda[:idx].strip()
+                            break
+                    if legenda:
+                        break
+            
+            # Se não encontrou no HTML completo, busca nos elementos individuais
+            if not legenda:
+                for elem in entry_content.find_all(['p', 'span', 'div', 'strong', 'em', 'li', 'b']):
+                    elem_html = str(elem)
+                    
+                    for pattern in legenda_patterns:
+                        legenda_match = re.search(pattern, elem_html, re.DOTALL)
+                        if legenda_match:
+                            legenda = legenda_match.group(1).strip()
+                            # Remove entidades HTML e tags
+                            legenda = html.unescape(legenda)
+                            legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+                            # Remove espaços extras e normaliza
+                            legenda = re.sub(r'\s+', ' ', legenda).strip()
+                            # Para antes de encontrar palavras de parada
+                            stop_words = ['Nota', 'Tamanho', 'IMDb', 'Vídeo', 'Áudio', 'Audio', 'Canais', 'Fansub', 'Qualidade', 'Duração', 'Formato', 'Status']
+                            for stop_word in stop_words:
+                                if stop_word in legenda:
+                                    idx = legenda.index(stop_word)
+                                    legenda = legenda[:idx].strip()
+                                    break
+                            if legenda:
+                                break
+                    if legenda:
+                        break
+            
+            # Concatena HTML de todos os parágrafos para verificação adicional
+            if all_paragraphs_html:
+                audio_html_content = ' '.join(all_paragraphs_html)
+            
+            # Determina audio_info baseado em Áudio e Legenda extraídos
+            if audio_text or legenda:
+                audio_lower = audio_text.lower() if audio_text else ''
+                legenda_lower = legenda.lower() if legenda else ''
+                
+                # Verifica se tem português no áudio (PT-BR é considerado português)
+                has_portugues_audio = (
+                    'português' in audio_lower or 'portugues' in audio_lower or 
+                    'pt-br' in audio_lower or 'ptbr' in audio_lower or 
+                    'pt br' in audio_lower
+                )
+                # Verifica se tem português na legenda (PT-BR é considerado português)
+                has_portugues_legenda = (
+                    'português' in legenda_lower or 'portugues' in legenda_lower or 
+                    'pt-br' in legenda_lower or 'ptbr' in legenda_lower or 
+                    'pt br' in legenda_lower
+                )
+                # Verifica se tem Japonês no áudio
+                has_japones_audio = 'japonês' in audio_lower or 'japones' in audio_lower or 'japanese' in audio_lower or 'jap' in audio_lower
+                # Verifica se tem Inglês no áudio
+                has_ingles_audio = 'inglês' in audio_lower or 'ingles' in audio_lower or 'english' in audio_lower or 'en' in audio_lower
+                # Verifica se tem Inglês em qualquer lugar
+                has_ingles = has_ingles_audio or 'inglês' in legenda_lower or 'ingles' in legenda_lower or 'english' in legenda_lower
+                
+                # Verifica se tem múltiplos idiomas no áudio (separados por | ou ,)
+                has_multiple_audio = '|' in audio_text or ',' in audio_text or ' e ' in audio_lower or ' and ' in audio_lower
+                
+                # Lógica: Se tem português E inglês no áudio → DUAL (gera [Brazilian] e [Eng])
+                if has_portugues_audio and has_ingles_audio:
+                    audio_info = 'dual'
+                # Se tem português E outro idioma (chinês, espanhol, etc.) → também é DUAL (gera [Brazilian])
+                elif has_portugues_audio and has_multiple_audio:
+                    audio_info = 'dual'  # Trata como DUAL quando tem português + outro idioma
+                # Se tem apenas português no áudio → gera [Brazilian]
+                elif has_portugues_audio:
+                    audio_info = 'português'
+                # Se tem japonês no áudio → gera [Jap]
+                elif has_japones_audio:
+                    audio_info = 'japonês'
+                # Se tem legenda PT-BR (português) OU tem Inglês → gera [Leg]
+                # PT-BR na legenda indica que o áudio é em outro idioma (geralmente inglês ou japonês) com legenda em português
+                elif has_portugues_legenda or has_ingles:
+                    audio_info = 'legendado'
         
         # Extrai links magnet - busca TODOS os links <a> no entry-content
         # A função _resolve_link automaticamente identifica e resolve links protegidos
@@ -480,7 +706,7 @@ class ComandScraper(BaseScraper):
                 # Salva release_title_magnet no Redis se encontrado (para reutilização por outros scrapers)
                 if not missing_dn and raw_release_title:
                     try:
-                        from utils.text.text_processing import save_release_title_to_redis
+                        from utils.text.storage import save_release_title_to_redis
                         save_release_title_to_redis(info_hash, raw_release_title)
                     except Exception:
                         pass
@@ -499,8 +725,16 @@ class ComandScraper(BaseScraper):
                     original_title, year, original_release_title, translated_title_html=translated_title if translated_title else None, raw_release_title_magnet=raw_release_title
                 )
                 
-                # Adiciona [Brazilian] se detectar DUAL/DUBLADO/NACIONAL, [Eng] se LEGENDADO, ou ambos se houver os dois
-                final_title = add_audio_tag_if_needed(standardized_title, original_release_title, info_hash=info_hash, skip_metadata=self._skip_metadata)
+                # Adiciona [Brazilian] se detectar DUAL/DUBLADO/NACIONAL, [Eng] se LEGENDADO, [Jap] se JAPONÊS, ou ambos se houver os dois
+                # Passa audio_info extraído do HTML (Áudio/Legenda) e audio_html_content para detecção adicional
+                final_title = add_audio_tag_if_needed(
+                    standardized_title, 
+                    original_release_title, 
+                    info_hash=info_hash, 
+                    skip_metadata=self._skip_metadata,
+                    audio_info_from_html=audio_info,
+                    audio_html_content=audio_html_content
+                )
                 
                 # Determina origem_audio_tag
                 origem_audio_tag = 'N/A'

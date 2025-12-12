@@ -24,9 +24,13 @@ Python indexer that organizes Brazilian torrents in a standardized format, ready
 - ✅ **Metadata API**: Busca automática de tamanhos, datas e nomes via iTorrents.org
 - ✅ **Tracker Scraping**: Consulta automática de trackers UDP para seeds/leechers
 - ✅ **FlareSolverr**: Suporte opcional para resolver Cloudflare com sessões reutilizáveis
-- ✅ **Cache Redis**: Cache inteligente para reduzir carga e latência
+- ✅ **Cache Multi-Camadas**: Cache Redis + Cache HTTP local em memória (30s) para máxima performance
 - ✅ **Sistema Cross-Data**: Compartilhamento de dados entre scrapers via Redis (reduz consultas desnecessárias)
 - ✅ **Circuit Breakers**: Proteção contra sobrecarga de serviços externos
+- ✅ **Paralelização 100%**: Processamento 100% paralelo de links para máxima velocidade
+- ✅ **Connection Pooling**: Pool de conexões HTTP otimizado (50 pools, 100 maxsize) para reduzir latência
+- ✅ **Rate Limiting Otimizado**: Rate limiter de metadata otimizado (6-7 req/s) para 5-10x mais rápido
+- ✅ **Semáforo de Metadata**: 128 requisições simultâneas de metadata para alta concorrência
 - ✅ **Otimizações**: Filtragem antes de enriquecimento pesado para melhor performance
 
 ## 🚀 Main Features
@@ -35,9 +39,13 @@ Python indexer that organizes Brazilian torrents in a standardized format, ready
 - ✅ **Metadata API**: Automatic search for sizes, dates and names via iTorrents.org
 - ✅ **Tracker Scraping**: Automatic UDP tracker queries for seeds/leechers
 - ✅ **FlareSolverr**: Optional support to resolve Cloudflare with reusable sessions
-- ✅ **Redis Cache**: Smart cache to reduce load and latency
+- ✅ **Multi-Layer Cache**: Redis Cache + Local HTTP cache in memory (30s) for maximum performance
 - ✅ **Cross-Data System**: Data sharing between scrapers via Redis (reduces unnecessary queries)
 - ✅ **Circuit Breakers**: Protection against external service overload
+- ✅ **100% Parallelization**: 100% parallel link processing for maximum speed
+- ✅ **Connection Pooling**: Optimized HTTP connection pool (50 pools, 100 maxsize) to reduce latency
+- ✅ **Optimized Rate Limiting**: Optimized metadata rate limiter (6-7 req/s) for 5-10x faster
+- ✅ **Metadata Semaphore**: 128 concurrent metadata requests for high concurrency
 - ✅ **Optimizations**: Filtering before heavy enrichment for better performance
 
 
@@ -198,19 +206,17 @@ All titles are standardized in the following format:
 
 ## 🎬 Tags adicionadas nos titles
 O sistema adiciona automaticamente tags de idioma aos títulos quando detecta informações de áudio:
-- **[Brazilian]**: Adicionada quando detecta `DUAL`, `DUBLADO`, `NACIONAL` ou `PORTUGUES` no `release_title_magnet`, metadata ou HTML da página (via `detect_audio_from_html`)
+- **[Brazilian]**: Adicionada quando detecta `DUAL`, `DUBLADO`, `NACIONAL` ou `PORTUGUES` no `release_title_magnet`, metadata ou HTML da página
 - **[Eng]**: Adicionada quando detecta `DUAL` (via HTML como 'dual', `release_title_magnet` ou metadata). DUAL indica português + inglês, então adiciona ambas as tags
-- **[Leg]**: Adicionada quando detecta `LEGENDADO`, `LEGENDA` ou `LEG` no `release_title_magnet`, metadata ou HTML da página (via `detect_audio_from_html`)
-- **[Brazilian] [Eng]**: Adicionada quando detecta `DUAL` (português + inglês)
-- **[Brazilian] [Leg]**: Adicionada quando detecta português E legendado (ex: DUBLADO + LEGENDADO)
+- **[Jap]**: Adicionada quando detecta `JAPONÊS`, `JAPONES`, `JAPANESE` ou `JAP` no `release_title_magnet`, metadata ou HTML da página
+- **[Leg]**: Adicionada quando detecta `LEGENDADO`, `LEGENDA` ou `LEG` no `release_title_magnet`, metadata ou HTML da página
 
 ## 🎬 Tags Added to Titles
 The system automatically adds language tags to titles when audio information is detected:
-- **[Brazilian]**: Added when detects `DUAL`, `DUBLADO`, `NACIONAL` or `PORTUGUES` in `release_title_magnet`, metadata or page HTML (via `detect_audio_from_html`)
+- **[Brazilian]**: Added when detects `DUAL`, `DUBLADO`, `NACIONAL` or `PORTUGUES` in `release_title_magnet`, metadata or page HTML
 - **[Eng]**: Added when detects `DUAL` (via HTML as 'dual', `release_title_magnet` or metadata). DUAL indicates Portuguese + English, so both tags are added
-- **[Leg]**: Added when detects `LEGENDADO`, `LEGENDA` or `LEG` in `release_title_magnet`, metadata or page HTML (via `detect_audio_from_html`)
-- **[Brazilian] [Eng]**: Added when detects `DUAL` (Portuguese + English)
-- **[Brazilian] [Leg]**: Added when detects Portuguese AND subtitled (e.g., DUBLADO + LEGENDADO)
+- **[Jap]**: Added when detects `JAPONÊS`, `JAPONES`, `JAPANESE` or `JAP` in `release_title_magnet`, metadata or page HTML
+- **[Leg]**: Added when detects `LEGENDADO`, `LEGENDA` or `LEG` in `release_title_magnet`, metadata or page HTML
 
 
 ## Variáveis de Ambiente
@@ -246,7 +252,12 @@ The system automatically adds language tags to titles when audio information is 
 | `LOG_FORMAT`                             | `console` or `json`                                                      | `console`          |
 
 ### Comportamento do Cache de HTML
-O sistema usa cache em dois níveis para HTML das páginas. O comportamento varia conforme o tipo de requisição:
+O sistema usa cache em **três camadas** para HTML das páginas:
+1. **Cache Local (Memória)**: 30 segundos - Primeira camada, mais rápida
+2. **Cache Redis (Curto)**: 10 minutos - Para páginas pequenas (< 500KB)
+3. **Cache Redis (Longo)**: 12 horas - Para páginas grandes (>= 500KB)
+
+O comportamento varia conforme o tipo de requisição:
 
 | Situação                 | Query            | `_is_test`| HTML usa cache?              | Vê novos links?                | Observações                               |
 |--------------------------|------------------|-----------|------------------------------|--------------------------------|-------------------------------------------|
@@ -262,7 +273,12 @@ O sistema usa cache em dois níveis para HTML das páginas. O comportamento vari
 **Importante**: Durante buscas sem query (`_is_test=True`), o HTML sempre é buscado fresco, garantindo que novos links apareçam imediatamente. O cache de HTML afeta apenas buscas com query.
 
 ### HTML Cache Behavior
-The system uses two-level caching for page HTML. Behavior varies according to request type:
+The system uses **three-layer caching** for page HTML:
+1. **Local Cache (Memory)**: 30 seconds - First layer, fastest
+2. **Redis Cache (Short)**: 10 minutes - For small pages (< 500KB)
+3. **Redis Cache (Long)**: 12 hours - For large pages (>= 500KB)
+
+Behavior varies according to request type:
 
 | Situation                 | Query            | `_is_test`| HTML uses cache?             | Sees new links?                | Notes                                     |
 |--------------------------|------------------|-----------|------------------------------|--------------------------------|-------------------------------------------|

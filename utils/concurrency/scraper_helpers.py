@@ -6,7 +6,7 @@ from typing import List, Optional, TypeVar, Callable, Dict
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from utils.text.text_processing import STOP_WORDS
+from utils.text.constants import STOP_WORDS
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +17,8 @@ T = TypeVar('T')
 DEFAULT_MAX_ITEMS_FOR_TEST: int = 0
 
 # Configurações de paralelização
-DEFAULT_MAX_WORKERS = 8  # Máximo de workers simultâneos para processamento paralelo
-DEFAULT_PAGE_TIMEOUT = 45  # Timeout em segundos por página
+DEFAULT_MAX_WORKERS = 16  # Máximo de workers simultâneos para processamento paralelo (aumentado de 8 para 16)
+DEFAULT_PAGE_TIMEOUT = 60  # Timeout em segundos por página (aumentado de 45 para 60)
 
 
 # Gera variações de uma query para busca, removendo stop words e usando primeira palavra
@@ -82,7 +82,7 @@ def build_page_url(base_url: str, page_pattern: str, page: str) -> str:
     return f"{base_url}{page_pattern.format(page)}"
 
 
-# Processa links em paralelo ou sequencialmente dependendo da quantidade
+# Processa links em paralelo SEMPRE para máxima performance
 def process_links_parallel(
     links: List[str],
     process_func: Callable[[str], List[Dict]],
@@ -103,43 +103,42 @@ def process_links_parallel(
         duplicates_count = len(links) - len(unique_links)
     
     links = unique_links
+    
+    # Se não há links, retorna vazio
+    if not links:
+        return []
+    
     all_torrents = []
     
-    if len(links) > 1:
-        # Paraleliza quando há múltiplas páginas
-        max_workers = min(max_workers, len(links))
+    # SEMPRE paraleliza (mesmo com 1 link) - overhead mínimo, consistência máxima
+    # Ajusta workers baseado na quantidade de links (mínimo 1, máximo max_workers)
+    actual_max_workers = min(max(1, len(links)), max_workers)
+    
+    with ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
+        future_to_link = {
+            executor.submit(process_func, link): link
+            for link in links
+        }
         
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_link = {
-                executor.submit(process_func, link): link
-                for link in links
-            }
-            
-            for future in as_completed(future_to_link):
-                link = future_to_link[future]
-                try:
-                    torrents = future.result(timeout=timeout)
-                    all_torrents.extend(torrents)
-                    logger.info(f"Página processada: {link} - {len(torrents)} magnets encontrados")
-                    # Para quando tiver resultados suficientes (se houver limite)
-                    if should_stop_processing(len(all_torrents), effective_max):
-                        # Cancela tarefas pendentes
-                        for f in future_to_link:
+        for future in as_completed(future_to_link):
+            link = future_to_link[future]
+            try:
+                torrents = future.result(timeout=timeout)
+                all_torrents.extend(torrents)
+                logger.info(f"Página processada: {link} - {len(torrents)} magnets encontrados")
+                
+                # Para quando tiver resultados suficientes (se houver limite)
+                if should_stop_processing(len(all_torrents), effective_max):
+                    # Cancela tarefas pendentes para economizar recursos
+                    for f in future_to_link:
+                        if not f.done():
                             f.cancel()
-                        break
-                except Exception as e:
-                    error_type = type(e).__name__
-                    error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
-                    link_preview = link[:50] if link else 'N/A'
-                    logger.warning(f"Page error: {error_type} - {error_msg} (link: {link_preview}...)")
-    else:
-        # Processa sequencialmente se houver apenas 1 link
-        for link in links:
-            torrents = process_func(link)
-            all_torrents.extend(torrents)
-            logger.info(f"Página processada: {link} - {len(torrents)} magnets encontrados")
-            if should_stop_processing(len(all_torrents), effective_max):
-                break
+                    break
+            except Exception as e:
+                error_type = type(e).__name__
+                error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
+                link_preview = link[:50] if link else 'N/A'
+                logger.warning(f"Page error: {error_type} - {error_msg} (link: {link_preview}...)")
     
     return all_torrents
 

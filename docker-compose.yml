@@ -37,7 +37,6 @@ services:
       - PORT=7006
       - LOG_LEVEL=1
       - LOG_FORMAT=console
-      - TRACKER_SCRAPING_ENABLED=true
     depends_on:
       - redis
       - flaresolverr

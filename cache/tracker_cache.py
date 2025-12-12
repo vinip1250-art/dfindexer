@@ -33,9 +33,9 @@ class TrackerCache:
                 peers_str = self.redis.hget(key, 'peers')
                 if peers_str:
                     data = json.loads(peers_str.decode('utf-8'))
-                    logger.debug(f"[TrackerCache] HIT: {info_hash_lower[:16]}... (seed: {data.get('seeders', 0)}, leech: {data.get('leechers', 0)})")
+                    logger.debug(f"[TrackerCache] HIT: hash: {info_hash_lower} (seed: {data.get('seeders', 0)}, leech: {data.get('leechers', 0)})")
                     return data
-                logger.debug(f"[TrackerCache] MISS: {info_hash_lower[:16]}...")
+                # Log removido - MISSs são esperados para novos hashes
             except Exception as e:
                 logger.debug(f"[TrackerCache] Erro ao buscar cache Redis: {type(e).__name__}")
                 # Se Redis falhou durante operação, não usa memória
@@ -48,9 +48,8 @@ class TrackerCache:
             
             cached = _request_cache.tracker_cache.get(info_hash_lower)
             if cached:
-                logger.debug(f"[TrackerCache] HIT (memória): {info_hash_lower[:16]}...")
-            else:
-                logger.debug(f"[TrackerCache] MISS (memória): {info_hash_lower[:16]}...")
+                logger.debug(f"[TrackerCache] HIT (memória): hash: {info_hash_lower}")
+            # Log removido - MISSs são esperados para novos hashes
             return cached
         
         return None
@@ -70,7 +69,7 @@ class TrackerCache:
                 # Define TTL no hash inteiro (24 horas = 86400s)
                 # Dados de tracker mudam frequentemente, então TTL menor é mais apropriado
                 self.redis.expire(key, 24 * 3600)
-                logger.debug(f"[TrackerCache] SET: {info_hash_lower[:16]}... (seed: {tracker_data.get('seeders', 0)}, leech: {tracker_data.get('leechers', 0)}, TTL: 24h)")
+                # Log removido - SETs são muito comuns e geram muito ruído
                 return
             except Exception as e:
                 logger.debug(f"[TrackerCache] Erro ao salvar cache Redis: {type(e).__name__}")

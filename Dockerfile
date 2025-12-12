@@ -2,22 +2,25 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Instala dependências do sistema (gcc necessário para compilar algumas dependências Python)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    g++ \
+    libxml2-dev \
+    libxslt1-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copia requirements primeiro (melhor cache do Docker)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Remove gcc após instalar dependências (reduz tamanho da imagem)
-RUN apt-get purge -y gcc && apt-get autoremove -y && apt-get clean
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Cria usuário não-root para segurança
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+RUN apt-get purge -y gcc g++ && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-# Copia código da aplicação
+RUN useradd -m -u 1000 appuser
+
 COPY app/ ./app/
 COPY api/ ./api/
 COPY cache/ ./cache/
@@ -28,11 +31,10 @@ COPY scraper/ ./scraper/
 COPY tracker/ ./tracker/
 COPY utils/ ./utils/
 
-# Muda para usuário não-root
+RUN chown -R appuser:appuser /app
+
 USER appuser
 
-# Expõe porta
 EXPOSE 7006
 
-# Comando padrão
 CMD ["python", "-m", "app.main"]

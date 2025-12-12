@@ -12,10 +12,10 @@ from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
 from utils.parsing.magnet_utils import process_trackers
-from utils.text.text_processing import (
-    find_year_from_text, find_sizes_from_text, STOP_WORDS,
-    add_audio_tag_if_needed, create_standardized_title, prepare_release_title
-)
+from utils.text.constants import STOP_WORDS
+from utils.text.utils import find_year_from_text, find_sizes_from_text
+from utils.text.audio import add_audio_tag_if_needed
+from utils.text.title_builder import create_standardized_title, prepare_release_title
 from utils.logging import format_error, format_link_preview
 
 logger = logging.getLogger(__name__)
@@ -64,17 +64,60 @@ class RedeScraper(BaseScraper):
                 variations.append(query_words[0])
         
         for variation in variations:
-            search_url = f"{self.base_url}{self.search_url}{quote(variation)}"
-            doc = self.get_document(search_url, self.base_url)
-            if not doc:
-                continue
-            
-            for item in doc.select('.capa_lista'):
-                link_elem = item.select_one('a')
-                if link_elem:
-                    href = link_elem.get('href')
-                    if href:
-                        links.append(href)
+            # Página 1: index.php?s={query}
+            page = 1
+            while True:
+                if page == 1:
+                    search_url = f"{self.base_url}{self.search_url}{quote(variation)}"
+                else:
+                    # Páginas seguintes: {query}/{page}/
+                    search_url = f"{self.base_url}{quote(variation)}/{page}/"
+                
+                doc = self.get_document(search_url, self.base_url)
+                if not doc:
+                    break
+                
+                page_links = []
+                for item in doc.select('.capa_lista'):
+                    link_elem = item.select_one('a')
+                    if link_elem:
+                        href = link_elem.get('href')
+                        if href:
+                            page_links.append(href)
+                
+                # Se não encontrou links nesta página, para
+                if not page_links:
+                    break
+                
+                links.extend(page_links)
+                
+                # Verifica se há próxima página
+                # Procura por links de paginação que indiquem próxima página
+                has_next_page = False
+                pagination_links = doc.select('a[href*="/"], .pagination a, .wp-pagenavi a')
+                for pag_link in pagination_links:
+                    href = pag_link.get('href', '')
+                    text = pag_link.get_text(strip=True).lower()
+                    # Verifica se há link para próxima página (número maior ou texto "próxima")
+                    if (f"/{page + 1}/" in href) or (text in ['próxima', 'next', '>', '»']):
+                        has_next_page = True
+                        break
+                    # Verifica se há número de página maior na paginação
+                    try:
+                        page_num = int(text)
+                        if page_num > page:
+                            has_next_page = True
+                            break
+                    except ValueError:
+                        pass
+                
+                if not has_next_page:
+                    break
+                
+                page += 1
+                # Limite de segurança: máximo 20 páginas
+                if page > 20:
+                    break
         
         return list(set(links))
     
@@ -176,6 +219,240 @@ class RedeScraper(BaseScraper):
         
         if not original_title:
             original_title = title
+        
+        # Extrai informações de idioma e legenda do HTML
+        audio_info = None  # Para detectar áudio/idioma do HTML
+        audio_html_content = ''  # Armazena HTML completo para verificação adicional
+        all_paragraphs_html = []  # Coleta HTML de todos os parágrafos
+        
+        idioma = ''
+        legenda = ''
+        
+        # Busca Idioma e Legenda em div#informacoes
+        # Primeiro tenta no HTML completo, depois nos parágrafos individuais
+        info_div = article.find('div', id='informacoes')
+        if info_div:
+            info_html = str(info_div)
+            all_paragraphs_html.append(info_html)
+            
+            # Extrai Idioma - busca primeiro no HTML completo
+            idioma_patterns = [
+                r'(?i)Idioma\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|Legendas?|Qualidade|Duração|Formato|Vídeo|Nota|Tamanho|$)',
+                r'(?i)<[^>]*>Idioma\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|Legendas?|$)',
+            ]
+            
+            for pattern in idioma_patterns:
+                idioma_match = re.search(pattern, info_html, re.DOTALL)
+                if idioma_match:
+                    idioma = idioma_match.group(1).strip()
+                    # Remove entidades HTML e tags
+                    idioma = html.unescape(idioma)
+                    idioma = re.sub(r'<[^>]+>', '', idioma).strip()
+                    # Remove espaços extras e normaliza
+                    idioma = re.sub(r'\s+', ' ', idioma).strip()
+                    if idioma:
+                        break
+            
+            # Se não encontrou no HTML completo, busca nos parágrafos individuais
+            if not idioma:
+                for p in article.select('div#informacoes > p'):
+                    html_content = str(p)
+                    html_content = html_content.replace('\n', '').replace('\t', '')
+                    html_content = re.sub(r'<br\s*\/?>', '<br>', html_content)
+                    lines = html_content.split('<br>')
+                    
+                    for line in lines:
+                        line_clean = re.sub(r'<[^>]*>', '', line).strip()
+                        if 'Idioma:' in line_clean:
+                            # Extrai o valor após "Idioma:"
+                            parts = line_clean.split('Idioma:')
+                            if len(parts) > 1:
+                                extracted = parts[1].strip()
+                                # Para antes de encontrar "Legendas", "Qualidade", etc.
+                                stop_words = ['Legendas', 'Legenda', 'Qualidade', 'Duração', 'Formato', 'Vídeo', 'Nota', 'Tamanho']
+                                for stop_word in stop_words:
+                                    if stop_word in extracted:
+                                        idx = extracted.index(stop_word)
+                                        extracted = extracted[:idx]
+                                        break
+                                idioma = extracted.strip()
+                                if idioma:
+                                    break
+                    if idioma:
+                        break
+            
+            # Extrai Legenda - busca primeiro no HTML completo
+            # Formato esperado: <strong>Legendas: </strong>\nPortuguês<br> ou <strong>Legendas: </strong>Português<br>
+            legenda_patterns = [
+                # Padrão 1: <strong>Legendas: </strong> seguido de quebra de linha (\n) e texto na próxima linha
+                r'(?i)<strong>Legendas?\s*:\s*</strong>\s*(?:<br\s*/?>)?\s*\n\s*([^<\n\r]+?)(?:<br|</div|</p|</strong|Nota|Tamanho|$)',
+                # Padrão 2: <strong>Legendas: </strong> seguido diretamente de texto (mesma linha)
+                r'(?i)<strong>Legendas?\s*:\s*</strong>\s*([^<\n\r]+?)(?:<br|</div|</p|</strong|Nota|Tamanho|$)',
+                # Padrão 3: <b>Legenda:</b> (fallback)
+                r'(?i)<b>Legendas?\s*:</b>\s*([^<]+?)(?:<br|</div|</p|</b|Nota|Tamanho|$)',
+                # Padrão 4: Legendas: sem tag (fallback)
+                r'(?i)Legendas?\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|Nota|Tamanho|Imdb|$)',
+                # Padrão 5: Qualquer tag com Legendas: (fallback genérico)
+                r'(?i)<[^>]*>Legendas?\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|$)',
+            ]
+            
+            for pattern in legenda_patterns:
+                legenda_match = re.search(pattern, info_html, re.DOTALL)
+                if legenda_match:
+                    legenda = legenda_match.group(1).strip()
+                    # Remove entidades HTML e tags
+                    legenda = html.unescape(legenda)
+                    legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+                    # Remove espaços extras e normaliza
+                    legenda = re.sub(r'\s+', ' ', legenda).strip()
+                    # Para antes de encontrar palavras de parada
+                    stop_words = ['Nota', 'Tamanho', 'Imdb', 'Vídeo', 'Áudio']
+                    for stop_word in stop_words:
+                        if stop_word in legenda:
+                            idx = legenda.index(stop_word)
+                            legenda = legenda[:idx].strip()
+                            break
+                    if legenda:
+                        break
+            
+            # Se não encontrou no HTML completo, busca nos parágrafos individuais
+            if not legenda:
+                for p in article.select('div#informacoes > p'):
+                    html_content = str(p)
+                    # NÃO remove quebras de linha - preserva para capturar formato <strong>Legendas: </strong>\nPortuguês<br>
+                    html_content_preserved = html_content.replace('\t', ' ')
+                    # Normaliza <br> mas preserva \n
+                    html_content_preserved = re.sub(r'<br\s*\/?>', '<br>', html_content_preserved)
+                    
+                    # Tenta primeiro com tag <strong> (formato do site: <strong>Legendas: </strong>\nPortuguês<br>)
+                    # Busca o texto após </strong> que pode estar na mesma linha ou próxima linha
+                    # Padrão 1: <strong>Legendas: </strong> seguido de quebra de linha e texto
+                    legenda_match = re.search(r'(?i)<strong>Legendas?\s*:\s*</strong>\s*(?:<br\s*/?>)?\s*\n\s*([^<\n\r]+?)(?:<br|</div|</p|</strong|Nota|Tamanho|$)', html_content_preserved, re.DOTALL)
+                    if not legenda_match:
+                        # Padrão 2: <strong>Legendas: </strong> seguido diretamente de texto (mesma linha)
+                        legenda_match = re.search(r'(?i)<strong>Legendas?\s*:\s*</strong>\s*([^<\n\r]+?)(?:<br|</div|</p|</strong|Nota|Tamanho|$)', html_content_preserved, re.DOTALL)
+                    
+                    if legenda_match:
+                        legenda = legenda_match.group(1).strip()
+                        legenda = html.unescape(legenda)
+                        legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+                        legenda = re.sub(r'\s+', ' ', legenda).strip()
+                        if legenda:
+                            break
+                    
+                    # Tenta com tag <b>
+                    if not legenda:
+                        legenda_match = re.search(r'(?i)<b>Legendas?\s*:</b>\s*([^<]+?)(?:<br|</div|</p|</b|$)', html_content_preserved, re.DOTALL)
+                        if legenda_match:
+                            legenda = legenda_match.group(1).strip()
+                            legenda = html.unescape(legenda)
+                            legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+                            legenda = re.sub(r'\s+', ' ', legenda).strip()
+                            if legenda:
+                                break
+                    
+                    # Se não encontrou, tenta sem tag, buscando em linhas separadas
+                    if not legenda:
+                        # Busca padrão: "Legendas:" seguido de texto na mesma linha ou próxima linha
+                        legenda_match = re.search(r'(?i)Legendas?\s*:\s*(?:<br\s*/?>)?\s*([^<\n\r]+?)(?:<br|</div|</p|Nota|Tamanho|$)', html_content_preserved, re.DOTALL)
+                        if legenda_match:
+                            legenda = legenda_match.group(1).strip()
+                            legenda = html.unescape(legenda)
+                            legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+                            legenda = re.sub(r'\s+', ' ', legenda).strip()
+                            if legenda:
+                                break
+                        
+                        # Último fallback: busca em linhas separadas (preservando \n)
+                        if not legenda:
+                            # Divide por <br> para processar cada parte
+                            parts_by_br = html_content_preserved.split('<br>')
+                            for i, part in enumerate(parts_by_br):
+                                # Verifica se tem <strong>Legendas: </strong> nesta parte
+                                if re.search(r'(?i)<strong>Legendas?\s*:', part):
+                                    # Tenta pegar texto após </strong> na mesma parte (pode ter \n)
+                                    match = re.search(r'(?i)</strong>\s*\n\s*([^<\n\r]+?)(?:<br|$)', part, re.DOTALL)
+                                    if not match:
+                                        # Tenta sem \n (mesma linha)
+                                        match = re.search(r'(?i)</strong>\s*([^<\n\r]+?)(?:<br|$)', part, re.DOTALL)
+                                    if match:
+                                        legenda = match.group(1).strip()
+                                        legenda = html.unescape(legenda)
+                                        legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+                                        legenda = re.sub(r'\s+', ' ', legenda).strip()
+                                        if legenda:
+                                            break
+                                    # Se não encontrou na mesma parte, tenta próxima parte
+                                    if i + 1 < len(parts_by_br):
+                                        next_part = re.sub(r'<[^>]*>', '', parts_by_br[i + 1]).strip()
+                                        if next_part and next_part not in ['Nota', 'Tamanho', 'Imdb', 'Vídeo', 'Áudio']:
+                                            legenda = next_part.strip()
+                                            break
+                                # Também verifica sem tag <strong>
+                                line_clean = re.sub(r'<[^>]*>', '', part).strip()
+                                if 'Legendas:' in line_clean or 'Legenda:' in line_clean:
+                                    # Tenta pegar da mesma linha
+                                    parts = line_clean.split(':')
+                                    if len(parts) > 1:
+                                        extracted = ':'.join(parts[1:]).strip()
+                                        if extracted:
+                                            legenda = extracted
+                                            break
+                                    # Se não tem na mesma linha, tenta próxima linha
+                                    if i + 1 < len(parts_by_br):
+                                        next_line = re.sub(r'<[^>]*>', '', parts_by_br[i + 1]).strip()
+                                        if next_line and next_line not in ['Nota', 'Tamanho', 'Imdb', 'Vídeo', 'Áudio']:
+                                            legenda = next_line
+                                            break
+                                if legenda:
+                                    break
+                    if legenda:
+                        break
+            
+            # Último fallback: busca direta no texto completo sem tags HTML
+            if not legenda:
+                info_text = info_div.get_text(separator='\n')
+                legenda_match = re.search(r'(?i)Legendas?\s*:\s*([^\n]+?)(?:\n|Nota|Tamanho|Imdb|Vídeo|Áudio|$)', info_text)
+                if legenda_match:
+                    legenda = legenda_match.group(1).strip()
+                    # Remove espaços extras
+                    legenda = re.sub(r'\s+', ' ', legenda).strip()
+                    # Para antes de encontrar palavras de parada
+                    stop_words = ['Nota', 'Tamanho', 'Imdb', 'Vídeo', 'Áudio']
+                    for stop_word in stop_words:
+                        if stop_word in legenda:
+                            idx = legenda.index(stop_word)
+                            legenda = legenda[:idx].strip()
+                            break
+        
+        # Determina audio_info baseado em Idioma e Legenda
+        if idioma or legenda:
+            idioma_lower = idioma.lower() if idioma else ''
+            legenda_lower = legenda.lower() if legenda else ''
+            
+            # Verifica se tem português no idioma (áudio)
+            has_portugues_audio = 'português' in idioma_lower or 'portugues' in idioma_lower
+            # Verifica se tem português na legenda
+            has_portugues_legenda = 'português' in legenda_lower or 'portugues' in legenda_lower
+            # Verifica se tem Inglês no idioma (áudio)
+            has_ingles_audio = 'inglês' in idioma_lower or 'ingles' in idioma_lower or 'english' in idioma_lower
+            # Verifica se tem Inglês em qualquer lugar
+            has_ingles = has_ingles_audio or 'inglês' in legenda_lower or 'ingles' in legenda_lower or 'english' in legenda_lower
+            
+            # Lógica melhorada:
+            # Se tem português E inglês no idioma → DUAL (gera [Brazilian] e [Eng])
+            if has_portugues_audio and has_ingles_audio:
+                audio_info = 'dual'
+            # Se tem apenas português no idioma → gera [Brazilian]
+            elif has_portugues_audio:
+                audio_info = 'português'
+            # Se tem legenda com português OU tem Inglês → gera [Leg]
+            elif has_portugues_legenda or has_ingles:
+                audio_info = 'legendado'
+        
+        # Concatena HTML de todos os parágrafos para verificação independente de inglês e legenda
+        if all_paragraphs_html:
+            audio_html_content = ' '.join(all_paragraphs_html)
         
         # Extrai tamanhos
         sizes = []
@@ -288,7 +565,7 @@ class RedeScraper(BaseScraper):
                 # Salva release_title_magnet no Redis se encontrado (para reutilização por outros scrapers)
                 if not missing_dn and raw_release_title:
                     try:
-                        from utils.text.text_processing import save_release_title_to_redis
+                        from utils.text.storage import save_release_title_to_redis
                         save_release_title_to_redis(info_hash, raw_release_title)
                     except Exception:
                         pass
@@ -308,7 +585,15 @@ class RedeScraper(BaseScraper):
                 )
                 
                 # Adiciona [Brazilian] se detectar DUAL/DUBLADO/NACIONAL, [Eng] se LEGENDADO, ou ambos se houver os dois
-                final_title = add_audio_tag_if_needed(standardized_title, original_release_title, info_hash=info_hash, skip_metadata=self._skip_metadata)
+                # Passa audio_info extraído do HTML (Idioma/Legenda) e audio_html_content para detecção adicional
+                final_title = add_audio_tag_if_needed(
+                    standardized_title, 
+                    original_release_title, 
+                    info_hash=info_hash, 
+                    skip_metadata=self._skip_metadata,
+                    audio_info_from_html=audio_info,
+                    audio_html_content=audio_html_content
+                )
                 
                 # Determina origem_audio_tag
                 origem_audio_tag = 'N/A'

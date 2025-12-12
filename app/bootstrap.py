@@ -23,7 +23,9 @@ class Bootstrap:
     @staticmethod
     def create_app() -> Flask:
         """Cria e configura aplicação Flask"""
-        app = Flask(__name__)
+        import os
+        template_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'api', 'templates')
+        app = Flask(__name__, template_folder=template_dir)
         
         Bootstrap.initialize_redis()
         register_routes(app)

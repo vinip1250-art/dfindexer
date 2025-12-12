@@ -6,7 +6,7 @@ import re
 import time
 import threading
 import json
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 from urllib.parse import unquote
 import requests
 from cache.redis_client import get_redis_client
@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 _request_cache = threading.local()
 _rate_limiter_lock = threading.Lock()
 _rate_limiter_last_request = 0.0
-_rate_limiter_min_interval = 0.5  # Reduzido de 1.0s para 0.5s (2 requisições/segundo)
-_rate_limiter_burst_tokens = 4  # Aumentado de 2 para 4 tokens
+_rate_limiter_min_interval = 0.15  # Otimizado para 0.15s (~6-7 requisições/segundo) - reduzido de 0.5s
+_rate_limiter_burst_tokens = 10  # Aumentado de 4 para 10 tokens para permitir rajadas maiores
 _CIRCUIT_BREAKER_KEY = circuit_metadata_key()
 _CIRCUIT_BREAKER_TIMEOUT_THRESHOLD = 3
 _CIRCUIT_BREAKER_503_THRESHOLD = 5
@@ -28,6 +28,9 @@ _CIRCUIT_BREAKER_FAILURE_CACHE_TTL = 60
 _CIRCUIT_BREAKER_503_CACHE_TTL = 300
 _hash_locks = {}
 _hash_locks_lock = threading.Lock()
+# Rastreia hashes que estão sendo buscados para evitar logs duplicados
+_hash_fetching = set()
+_hash_fetching_lock = threading.Lock()
 
 
 def _is_redis_connection_error(error: Exception) -> bool:
@@ -75,7 +78,7 @@ def _rate_limit():
         
         if elapsed >= _rate_limiter_min_interval:
             tokens_to_add = int(elapsed / _rate_limiter_min_interval)
-            _rate_limiter_burst_tokens = min(2, _rate_limiter_burst_tokens + tokens_to_add)
+            _rate_limiter_burst_tokens = min(10, _rate_limiter_burst_tokens + tokens_to_add)
         
         if _rate_limiter_burst_tokens <= 0:
             wait_time = _rate_limiter_min_interval - elapsed
@@ -85,7 +88,7 @@ def _rate_limit():
                 elapsed = now - _rate_limiter_last_request
                 if elapsed >= _rate_limiter_min_interval:
                     tokens_to_add = int(elapsed / _rate_limiter_min_interval)
-                    _rate_limiter_burst_tokens = min(2, tokens_to_add)
+                    _rate_limiter_burst_tokens = min(10, tokens_to_add)
         
         _rate_limiter_burst_tokens -= 1
         _rate_limiter_last_request = now
@@ -375,8 +378,8 @@ def _fetch_torrent_header(info_hash: str, use_lowercase: bool = False) -> Tuple[
         'Accept-Encoding': 'gzip',
     })
     
-    # Timeout otimizado: reduzido para acelerar requisições (2s connect + 1.5s read)
-    timeout_config = (2, 1.5)  # (connect_timeout, read_timeout) - reduzido de (3, 2)
+    # Timeout otimizado para balancear velocidade e confiabilidade
+    timeout_config = (3, 3)  # (connect_timeout, read_timeout) - aumentado de (2, 1.5) para reduzir timeouts
     
     # Tenta baixar chunks progressivamente até ter o header completo
     # Chunk inicial muito maior para reduzir drasticamente número de requisições HTTP
@@ -489,12 +492,14 @@ def _fetch_torrent_header(info_hash: str, use_lowercase: bool = False) -> Tuple[
         return None, False, False
 
 
-def fetch_metadata_from_itorrents(info_hash: str) -> Optional[Dict[str, any]]:
+def fetch_metadata_from_itorrents(info_hash: str, scraper_name: Optional[str] = None, title: Optional[str] = None) -> Optional[Dict[str, any]]:
     """
     Busca metadados do torrent via iTorrents.org.
     
     Args:
         info_hash: Info hash do torrent (hex, 40 caracteres)
+        scraper_name: Nome do scraper (opcional, para logs)
+        title: Título do torrent (opcional, para logs)
         
     Returns:
         Dict com metadados extraídos:
@@ -508,94 +513,118 @@ def fetch_metadata_from_itorrents(info_hash: str) -> Optional[Dict[str, any]]:
     
     redis = get_redis_client()
     
-    # Verifica cache primeiro (Redis ou memória conforme disponibilidade)
-    try:
-        from cache.metadata_cache import MetadataCache
-        metadata_cache = MetadataCache()
-        data = metadata_cache.get(info_hash_lower)
-        if data:
-            logger.debug(f"[Metadata] HIT (cache): {info_hash_lower[:16]}... (name: '{data.get('name', 'N/A')[:50]}...', size: {data.get('size', 0)})")
-            return data
-        logger.debug(f"[Metadata] MISS (cache): {info_hash_lower[:16]}...")
-    except Exception as e:
-        _log_redis_error("verificar cache de metadata", e)
-    
-    # Verifica circuit breaker
-    if _is_circuit_breaker_open():
-        # Throttling de logs - só loga uma vez a cada 30 segundos
-        now = time.time()
-        log_key = "circuit_breaker_skip_metadata"
-        should_log = False
-        with _circuit_breaker_log_lock:
-            last_logged = _circuit_breaker_log_cache.get(log_key, 0)
-            if now - last_logged >= _CIRCUIT_BREAKER_LOG_COOLDOWN:
-                _circuit_breaker_log_cache[log_key] = now
-                should_log = True
-        
-        return None
-    
-    # Verifica se há falha recente em cache
-    if _is_failure_cached(info_hash):
-        # Throttling de logs - só loga uma vez a cada 60 segundos por hash
-        now = time.time()
-        log_key = f"cache_failure_{info_hash_lower}"
-        should_log = False
-        with _cache_failure_log_lock:
-            last_logged = _cache_failure_log_cache.get(log_key, 0)
-            if now - last_logged >= _CACHE_FAILURE_LOG_COOLDOWN:
-                _cache_failure_log_cache[log_key] = now
-                should_log = True
-        
-        return None
-    
     # Usa lock por hash para evitar requisições simultâneas ao mesmo hash
     hash_lock = _get_hash_lock(info_hash)
     with hash_lock:
-        # Verifica cache novamente após adquirir lock (outra thread pode ter cacheado)
+        # Verifica cache primeiro (dentro do lock para evitar verificações duplicadas)
         try:
             from cache.metadata_cache import MetadataCache
             metadata_cache = MetadataCache()
             data = metadata_cache.get(info_hash_lower)
             if data:
                 return data
-        except Exception:
-            pass
+        except Exception as e:
+            _log_redis_error("verificar cache de metadata", e)
+        
+        # Verifica circuit breaker
+        if _is_circuit_breaker_open():
+            # Throttling de logs - só loga uma vez a cada 30 segundos
+            now = time.time()
+            log_key = "circuit_breaker_skip_metadata"
+            should_log = False
+            with _circuit_breaker_log_lock:
+                last_logged = _circuit_breaker_log_cache.get(log_key, 0)
+                if now - last_logged >= _CIRCUIT_BREAKER_LOG_COOLDOWN:
+                    _circuit_breaker_log_cache[log_key] = now
+                    should_log = True
+            
+            return None
+        
+        # Verifica se há falha recente em cache
+        if _is_failure_cached(info_hash):
+            # Throttling de logs - só loga uma vez a cada 60 segundos por hash
+            now = time.time()
+            log_key = f"cache_failure_{info_hash_lower}"
+            should_log = False
+            with _cache_failure_log_lock:
+                last_logged = _cache_failure_log_cache.get(log_key, 0)
+                if now - last_logged >= _CACHE_FAILURE_LOG_COOLDOWN:
+                    _cache_failure_log_cache[log_key] = now
+                    should_log = True
+            
+            return None
+        
+        # Verifica se já está sendo buscado por outra thread (evita logs duplicados)
+        is_fetching = False
+        with _hash_fetching_lock:
+            if info_hash_lower in _hash_fetching:
+                is_fetching = True
+            else:
+                _hash_fetching.add(info_hash_lower)
+        
+        # Se já está sendo buscado, espera um pouco e verifica cache novamente
+        if is_fetching:
+            import time
+            # Espera até 2 segundos verificando cache periodicamente
+            for _ in range(20):
+                time.sleep(0.1)  # Espera 100ms
+                try:
+                    from cache.metadata_cache import MetadataCache
+                    metadata_cache = MetadataCache()
+                    data = metadata_cache.get(info_hash_lower)
+                    if data:
+                        # Outra thread já buscou e salvou no cache
+                        return data
+                except Exception:
+                    pass
+            # Se não encontrou após esperar, outra thread está buscando
+            # Remove do conjunto e retorna None para evitar busca duplicada
+            with _hash_fetching_lock:
+                _hash_fetching.discard(info_hash_lower)
+            return None
         
         # Busca do iTorrents (não estava em cache)
-        # Tenta com lowercase primeiro (mais comum)
-        logger.debug(f"[Metadata] Buscando metadata do iTorrents.org (lowercase): {info_hash_lower[:16]}...")
-        torrent_data, was_timeout, was_503 = _fetch_torrent_header(info_hash, use_lowercase=True)
+        # Log apenas quando realmente vai buscar (não está em cache após lock e não está sendo buscado)
+        # Monta identificação para o log
+        log_parts = []
+        if scraper_name:
+            log_parts.append(f"[{scraper_name}]")
+        if title:
+            title_preview = title[:50] if len(title) > 50 else title
+            log_parts.append(title_preview)
+        # Sempre inclui o hash completo para identificação
+        log_parts.append(f"(hash: {info_hash_lower})")
+        log_id = " ".join(log_parts) if log_parts else f"hash: {info_hash_lower}"
+        logger.debug(f"[Metadata] Buscando metadata: {log_id}")
         
-        # Se falhou mas não foi timeout nem 503, tenta com uppercase (menos comum)
-        # Se foi timeout ou 503, não tenta novamente para evitar esperas longas
-        if not torrent_data and not was_timeout and not was_503:
-            logger.debug(f"[Metadata] Tentando novamente com uppercase: {info_hash[:16]}...")
-            torrent_data, was_timeout, was_503 = _fetch_torrent_header(info_hash, use_lowercase=False)
-        
-        if not torrent_data:
-            # Timeouts não devem cachear falha - podem ser temporários (rede lenta, servidor ocupado)
-            # Apenas cacheia se foi erro HTTP específico (já foi cacheado dentro de _fetch_torrent_header)
-            if was_503:
-                logger.debug(f"[Metadata] Falha 503 ao buscar metadata: {info_hash_lower[:16]}...")
-                # Erro 503 já foi cacheado dentro de _fetch_torrent_header
-                pass
-            elif was_timeout:
-                logger.debug(f"[Metadata] Timeout ao buscar metadata: {info_hash_lower[:16]}...")
-            else:
-                logger.debug(f"[Metadata] Falha ao buscar metadata: {info_hash_lower[:16]}...")
-                # Outras falhas (404, 500, etc.) já foram cacheadas dentro de _fetch_torrent_header
-                # Timeouts não cacheiam para permitir retry rápido
-                pass
-            return None
+        try:
+            # Tenta com lowercase primeiro (mais comum)
+            torrent_data, was_timeout, was_503 = _fetch_torrent_header(info_hash, use_lowercase=True)
+            
+            # Se falhou mas não foi timeout nem 503, tenta com uppercase (menos comum)
+            # Se foi timeout ou 503, não tenta novamente para evitar esperas longas
+            if not torrent_data and not was_timeout and not was_503:
+                torrent_data, was_timeout, was_503 = _fetch_torrent_header(info_hash, use_lowercase=False)
+            
+            if not torrent_data:
+                # Timeouts não devem cachear falha - podem ser temporários (rede lenta, servidor ocupado)
+                # Apenas cacheia se foi erro HTTP específico (já foi cacheado dentro de _fetch_torrent_header)
+                # Logs de erro removidos para reduzir verbosidade
+                # Remove do conjunto de hashes sendo buscados mesmo em caso de falha
+                with _hash_fetching_lock:
+                    _hash_fetching.discard(info_hash_lower)
+                return None
+        except Exception as e:
+            # Em caso de erro, remove do conjunto
+            with _hash_fetching_lock:
+                _hash_fetching.discard(info_hash_lower)
+            raise
         
         # Extrai tamanho do bencode
         size = _parse_bencode_size(torrent_data)
         
         if not size:
-            logger.debug(f"[Metadata] Não foi possível extrair tamanho do bencode: {info_hash_lower[:16]}...")
             return None
-        
-        logger.debug(f"[Metadata] Tamanho extraído: {size} bytes para {info_hash_lower[:16]}...")
         
         # Tenta extrair nome também (opcional)
         name = None
@@ -608,7 +637,7 @@ def fetch_metadata_from_itorrents(info_hash: str) -> Optional[Dict[str, any]]:
                 if start_pos + name_len <= len(torrent_data):
                     name_bytes = torrent_data[start_pos:start_pos + name_len]
                     name = name_bytes.decode('utf-8', errors='ignore')
-                    logger.debug(f"[Metadata] Nome extraído: '{name[:80]}...' para {info_hash_lower[:16]}...")
+                    # Log removido - nome será usado apenas internamente
         except Exception:
             pass
         
@@ -668,6 +697,10 @@ def fetch_metadata_from_itorrents(info_hash: str) -> Optional[Dict[str, any]]:
         except Exception:
             pass
         
+        # Remove do conjunto de hashes sendo buscados após salvar no cache com sucesso
+        with _hash_fetching_lock:
+            _hash_fetching.discard(info_hash_lower)
+        
         return result
 
 
@@ -683,7 +716,7 @@ def get_torrent_size(magnet_link: str, info_hash: Optional[str] = None) -> Optio
         String com tamanho formatado (ex: "1.5 GB") ou None
     """
     from magnet.parser import MagnetParser
-    from utils.text.text_processing import format_bytes
+    from utils.text.utils import format_bytes
     
     try:
         # Extrai info_hash do magnet se não fornecido

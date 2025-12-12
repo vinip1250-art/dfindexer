@@ -1,7 +1,7 @@
 """Copyright (c) 2025 DFlexy"""
 """https://github.com/DFlexy"""
 
-from flask import Flask
+from flask import Flask, render_template
 from api.handlers import index_handler, indexer_handler
 
 
@@ -9,4 +9,10 @@ def register_routes(app: Flask):
     app.add_url_rule('/', 'index', index_handler, methods=['GET'])
     app.add_url_rule('/indexer', 'indexer', lambda: indexer_handler(None), methods=['GET'])
     app.add_url_rule('/indexers/<site_name>', 'indexer_by_site', indexer_handler, methods=['GET'])
+    app.add_url_rule('/api', 'search_page', search_page_handler, methods=['GET'])
+
+
+def search_page_handler():
+    """Handler para a página de busca web"""
+    return render_template('search.html')
 

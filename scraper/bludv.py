@@ -12,11 +12,10 @@ from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
 from utils.parsing.magnet_utils import process_trackers
-from utils.text.text_processing import (
-    create_standardized_title,
-    find_year_from_text, find_sizes_from_text, STOP_WORDS,
-    add_audio_tag_if_needed, prepare_release_title
-)
+from utils.text.constants import STOP_WORDS
+from utils.text.utils import find_year_from_text, find_sizes_from_text
+from utils.text.audio import add_audio_tag_if_needed
+from utils.text.title_builder import create_standardized_title, prepare_release_title
 from utils.logging import format_error, format_link_preview
 
 logger = logging.getLogger(__name__)
@@ -206,7 +205,7 @@ class BludvScraper(BaseScraper):
                                 break
                         if translated_title:
                             # Limpa o título traduzido
-                            from utils.text.text_processing import clean_translated_title
+                            from utils.text.cleaning import clean_translated_title
                             translated_title = clean_translated_title(translated_title)
                             break
         
@@ -214,10 +213,166 @@ class BludvScraper(BaseScraper):
         if not original_title:
             original_title = page_title
         
+        # Extrai informações de áudio e legenda do HTML
+        audio_info = None  # Para detectar áudio/idioma do HTML
+        audio_html_content = ''  # Armazena HTML completo para verificação adicional
+        all_paragraphs_html = []  # Coleta HTML de todos os parágrafos
+        
+        audio_text = ''
+        legenda = ''
+        
         # Extrai ano e tamanhos
         year = ''
         sizes = []
         imdb = ''
+        
+        if content_div:
+            # Primeiro tenta no HTML completo do content_div
+            content_html = str(content_div)
+            all_paragraphs_html.append(content_html)
+            
+            # Extrai Áudio - busca primeiro no HTML completo
+            audio_patterns = [
+                r'(?i)Áudio\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|</span|Legenda|Qualidade|Duração|Formato|Vídeo|Nota|Tamanho|IMDb|$)',
+                r'(?i)Audio\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|</span|Legenda|Qualidade|Duração|Formato|Vídeo|Nota|Tamanho|IMDb|$)',
+                r'(?i)<[^>]*>Áudio\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|Legenda|$)',
+                r'(?i)<[^>]*>Audio\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|Legenda|$)',
+            ]
+            
+            for pattern in audio_patterns:
+                audio_match = re.search(pattern, content_html, re.DOTALL)
+                if audio_match:
+                    audio_text = audio_match.group(1).strip()
+                    # Remove entidades HTML e tags
+                    audio_text = html.unescape(audio_text)
+                    audio_text = re.sub(r'<[^>]+>', '', audio_text).strip()
+                    # Remove espaços extras e normaliza
+                    audio_text = re.sub(r'\s+', ' ', audio_text).strip()
+                    # Para antes de encontrar palavras de parada
+                    stop_words = ['Legenda', 'Qualidade', 'Duração', 'Formato', 'Vídeo', 'Nota', 'Tamanho', 'IMDb']
+                    for stop_word in stop_words:
+                        if stop_word in audio_text:
+                            idx = audio_text.index(stop_word)
+                            audio_text = audio_text[:idx].strip()
+                            break
+                    if audio_text:
+                        break
+            
+            # Se não encontrou no HTML completo, busca nos elementos individuais
+            if not audio_text:
+                for elem in content_div.find_all(['p', 'span', 'div', 'strong', 'em', 'li']):
+                    elem_html = str(elem)
+                    all_paragraphs_html.append(elem_html)
+                    
+                    for pattern in audio_patterns:
+                        audio_match = re.search(pattern, elem_html, re.DOTALL)
+                        if audio_match:
+                            audio_text = audio_match.group(1).strip()
+                            # Remove entidades HTML e tags
+                            audio_text = html.unescape(audio_text)
+                            audio_text = re.sub(r'<[^>]+>', '', audio_text).strip()
+                            # Remove espaços extras e normaliza
+                            audio_text = re.sub(r'\s+', ' ', audio_text).strip()
+                            # Para antes de encontrar palavras de parada
+                            stop_words = ['Legenda', 'Qualidade', 'Duração', 'Formato', 'Vídeo', 'Nota', 'Tamanho', 'IMDb']
+                            for stop_word in stop_words:
+                                if stop_word in audio_text:
+                                    idx = audio_text.index(stop_word)
+                                    audio_text = audio_text[:idx].strip()
+                                    break
+                            if audio_text:
+                                break
+                    if audio_text:
+                        break
+            
+            # Extrai Legenda - busca primeiro no HTML completo
+            legenda_patterns = [
+                r'(?i)Legendas?\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|</span|Qualidade|Duração|Formato|Vídeo|Nota|Tamanho|IMDb|Áudio|Audio|$)',
+                r'(?i)<[^>]*>Legendas?\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|Qualidade|$)',
+                r'(?i)<strong>Legendas?\s*:\s*</strong>\s*(?:<br\s*/?>)?\s*\n\s*([^<\n\r]+?)(?:<br|</div|</p|</strong|Nota|Tamanho|$)',
+            ]
+            
+            for pattern in legenda_patterns:
+                legenda_match = re.search(pattern, content_html, re.DOTALL)
+                if legenda_match:
+                    legenda = legenda_match.group(1).strip()
+                    # Remove entidades HTML e tags
+                    legenda = html.unescape(legenda)
+                    legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+                    # Remove espaços extras e normaliza
+                    legenda = re.sub(r'\s+', ' ', legenda).strip()
+                    # Para antes de encontrar palavras de parada
+                    stop_words = ['Nota', 'Tamanho', 'IMDb', 'Vídeo', 'Áudio', 'Audio', 'Qualidade', 'Duração', 'Formato']
+                    for stop_word in stop_words:
+                        if stop_word in legenda:
+                            idx = legenda.index(stop_word)
+                            legenda = legenda[:idx].strip()
+                            break
+                    if legenda:
+                        break
+            
+            # Se não encontrou no HTML completo, busca nos elementos individuais
+            if not legenda:
+                for elem in content_div.find_all(['p', 'span', 'div', 'strong', 'em', 'li']):
+                    elem_html = str(elem)
+                    
+                    for pattern in legenda_patterns:
+                        legenda_match = re.search(pattern, elem_html, re.DOTALL)
+                        if legenda_match:
+                            legenda = legenda_match.group(1).strip()
+                            # Remove entidades HTML e tags
+                            legenda = html.unescape(legenda)
+                            legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+                            # Remove espaços extras e normaliza
+                            legenda = re.sub(r'\s+', ' ', legenda).strip()
+                            # Para antes de encontrar palavras de parada
+                            stop_words = ['Nota', 'Tamanho', 'IMDb', 'Vídeo', 'Áudio', 'Audio', 'Qualidade', 'Duração', 'Formato']
+                            for stop_word in stop_words:
+                                if stop_word in legenda:
+                                    idx = legenda.index(stop_word)
+                                    legenda = legenda[:idx].strip()
+                                    break
+                            if legenda:
+                                break
+                    if legenda:
+                        break
+            
+            # Concatena HTML de todos os parágrafos para verificação adicional
+            if all_paragraphs_html:
+                audio_html_content = ' '.join(all_paragraphs_html)
+            
+            # Determina audio_info baseado em Áudio e Legenda extraídos
+            if audio_text or legenda:
+                audio_lower = audio_text.lower() if audio_text else ''
+                legenda_lower = legenda.lower() if legenda else ''
+                
+                # Verifica se tem português no áudio (PT-BR é considerado português)
+                has_portugues_audio = (
+                    'português' in audio_lower or 'portugues' in audio_lower or 
+                    'pt-br' in audio_lower or 'ptbr' in audio_lower or 
+                    'pt br' in audio_lower
+                )
+                # Verifica se tem português na legenda (PT-BR é considerado português)
+                has_portugues_legenda = (
+                    'português' in legenda_lower or 'portugues' in legenda_lower or 
+                    'pt-br' in legenda_lower or 'ptbr' in legenda_lower or 
+                    'pt br' in legenda_lower
+                )
+                # Verifica se tem Inglês no áudio
+                has_ingles_audio = 'inglês' in audio_lower or 'ingles' in audio_lower or 'english' in audio_lower or 'en' in audio_lower
+                # Verifica se tem Inglês em qualquer lugar
+                has_ingles = has_ingles_audio or 'inglês' in legenda_lower or 'ingles' in legenda_lower or 'english' in legenda_lower
+                
+                # Lógica: Se tem português E inglês no áudio → DUAL (gera [Brazilian] e [Eng])
+                if has_portugues_audio and has_ingles_audio:
+                    audio_info = 'dual'
+                # Se tem apenas português no áudio → gera [Brazilian]
+                elif has_portugues_audio:
+                    audio_info = 'português'
+                # Se tem legenda PT-BR (português) OU tem Inglês → gera [Leg]
+                # PT-BR na legenda indica que o áudio é em outro idioma (geralmente inglês) com legenda em português
+                elif has_portugues_legenda or has_ingles:
+                    audio_info = 'legendado'
         
         if content_div:
             for p in content_div.select('p, span, div'):
@@ -345,7 +500,7 @@ class BludvScraper(BaseScraper):
                 # Salva release_title_magnet no Redis se encontrado (para reutilização por outros scrapers)
                 if not missing_dn and raw_release_title:
                     try:
-                        from utils.text.text_processing import save_release_title_to_redis
+                        from utils.text.storage import save_release_title_to_redis
                         save_release_title_to_redis(info_hash, raw_release_title)
                     except Exception:
                         pass
@@ -370,7 +525,15 @@ class BludvScraper(BaseScraper):
                 )
                 
                 # Adiciona [Brazilian] se detectar DUAL/DUBLADO/NACIONAL, [Eng] se LEGENDADO, ou ambos se houver os dois
-                final_title = add_audio_tag_if_needed(standardized_title, original_release_title, info_hash=info_hash, skip_metadata=self._skip_metadata)
+                # Passa audio_info extraído do HTML (Áudio/Legenda) e audio_html_content para detecção adicional
+                final_title = add_audio_tag_if_needed(
+                    standardized_title, 
+                    original_release_title, 
+                    info_hash=info_hash, 
+                    skip_metadata=self._skip_metadata,
+                    audio_info_from_html=audio_info,
+                    audio_html_content=audio_html_content
+                )
                 
                 # Determina origem_audio_tag
                 origem_audio_tag = 'N/A'

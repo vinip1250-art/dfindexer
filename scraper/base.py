@@ -14,13 +14,29 @@ from cache.redis_keys import html_long_key, html_short_key
 from app.config import Config
 from tracker import get_tracker_service  # type: ignore[import]
 from magnet.parser import MagnetParser
-from utils.text.text_processing import format_bytes
+from utils.text.utils import format_bytes
 from utils.http.flaresolverr import FlareSolverrClient
 
 logger = logging.getLogger(__name__)
 
 # Cache em memória por requisição (apenas quando Redis não está disponível)
 _request_cache = threading.local()
+
+# Lock por URL para evitar requisições HTTP duplicadas simultâneas
+_url_locks = {}
+_url_locks_lock = threading.Lock()
+_url_fetching = set()  # Conjunto para rastrear URLs sendo buscadas
+_url_fetching_lock = threading.Lock()  # Lock para o conjunto _url_fetching
+
+
+def _get_url_lock(url: str):
+    """
+    Obtém um lock específico para uma URL, evitando requisições simultâneas.
+    """
+    with _url_locks_lock:
+        if url not in _url_locks:
+            _url_locks[url] = threading.Lock()
+        return _url_locks[url]
 
 
 # Classe base para scrapers
@@ -39,7 +55,17 @@ class BaseScraper(ABC):
             )
         self.base_url = resolved_url
         self.redis = get_redis_client()  # Pode ser None se Redis não disponível
+        
+        # Configura session com connection pooling otimizado
         self.session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=Config.HTTP_POOL_CONNECTIONS if hasattr(Config, 'HTTP_POOL_CONNECTIONS') else 50,
+            pool_maxsize=Config.HTTP_POOL_MAXSIZE if hasattr(Config, 'HTTP_POOL_MAXSIZE') else 100,
+            max_retries=3,
+            pool_block=False
+        )
+        self.session.mount('http://', adapter)
+        self.session.mount('https://', adapter)
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -89,6 +115,17 @@ class BaseScraper(ABC):
                 self.use_flaresolverr = False
     
     def get_document(self, url: str, referer: str = '') -> Optional[BeautifulSoup]:
+        # Verifica cache local primeiro (mais rápido que Redis)
+        from cache.http_cache import get_http_cache
+        http_cache = get_http_cache()
+        
+        if not self._is_test:
+            cached_local = http_cache.get(url)
+            if cached_local:
+                self._cache_stats['html']['hits'] += 1
+                return BeautifulSoup(cached_local, 'html.parser')
+        
+        # Verifica Redis
         if self.redis and not self._is_test:
             try:
                 cache_key = html_long_key(url)
@@ -96,8 +133,12 @@ class BaseScraper(ABC):
                 if cached:
                     self._cache_stats['html']['hits'] += 1
                     return BeautifulSoup(cached, 'html.parser')
-            except:
-                pass
+            except (AttributeError, TypeError) as e:
+                # Redis client error ou cache inválido - continua para buscar do site
+                logger.debug(f"Redis cache error (long): {type(e).__name__}")
+            except Exception as e:
+                # Outros erros de Redis - loga mas continua
+                logger.debug(f"Unexpected Redis error (long): {type(e).__name__}")
         
         if self.redis and not self._is_test:
             try:
@@ -106,10 +147,64 @@ class BaseScraper(ABC):
                 if cached:
                     self._cache_stats['html']['hits'] += 1
                     return BeautifulSoup(cached, 'html.parser')
-            except:
-                pass
+            except (AttributeError, TypeError) as e:
+                # Redis client error ou cache inválido - continua para buscar do site
+                logger.debug(f"Redis cache error (short): {type(e).__name__}")
+            except Exception as e:
+                # Outros erros de Redis - loga mas continua
+                logger.debug(f"Unexpected Redis error (short): {type(e).__name__}")
         
         # Cache miss - será buscado do site
+        # Usa lock por URL para evitar requisições simultâneas para a mesma URL
+        url_lock = _get_url_lock(url)
+        with url_lock:
+            # Verifica cache novamente após adquirir lock (outra thread pode ter cacheado)
+            if self.redis and not self._is_test:
+                try:
+                    cache_key = html_long_key(url)
+                    cached = self.redis.get(cache_key)
+                    if cached:
+                        self._cache_stats['html']['hits'] += 1
+                        return BeautifulSoup(cached, 'html.parser')
+                except Exception:
+                    pass
+            
+            if self.redis and not self._is_test:
+                try:
+                    short_cache_key = html_short_key(url)
+                    cached = self.redis.get(short_cache_key)
+                    if cached:
+                        self._cache_stats['html']['hits'] += 1
+                        return BeautifulSoup(cached, 'html.parser')
+                except Exception:
+                    pass
+            
+            # Verifica se já está sendo buscado por outra thread (evita logs duplicados)
+            is_fetching = False
+            with _url_fetching_lock:
+                if url in _url_fetching:
+                    is_fetching = True
+                else:
+                    _url_fetching.add(url)
+            
+            # Se já está sendo buscado, espera um pouco e verifica cache novamente
+            if is_fetching:
+                import time
+                for _ in range(20):  # Tenta por até 2 segundos (20 * 0.1s)
+                    time.sleep(0.1)  # Espera 100ms
+                    if self.redis and not self._is_test:
+                        try:
+                            cache_key = html_long_key(url)
+                            cached = self.redis.get(cache_key)
+                            if cached:
+                                with _url_fetching_lock:
+                                    _url_fetching.discard(url)
+                                self._cache_stats['html']['hits'] += 1
+                                return BeautifulSoup(cached, 'html.parser')
+                        except Exception:
+                            pass
+                # Se não encontrou após esperar, continua a busca (pode ter falhado ou demorado demais)
+            
         self._cache_stats['html']['misses'] += 1
         
         html_content = None
@@ -135,6 +230,16 @@ class BaseScraper(ABC):
                         skip_redis=self._is_test
                     )
                     if html_content:
+                        # Salva no cache local primeiro (mais rápido)
+                        if not self._is_test:
+                            try:
+                                from cache.http_cache import get_http_cache
+                                http_cache = get_http_cache()
+                                http_cache.set(url, html_content)
+                            except:
+                                pass
+                        
+                        # Salva no Redis
                         if self.redis and not self._is_test:
                             try:
                                 short_cache_key = html_short_key(url)
@@ -153,7 +258,10 @@ class BaseScraper(ABC):
                             except:
                                 pass
                         
-                        return BeautifulSoup(html_content, 'html.parser')
+                        result = BeautifulSoup(html_content, 'html.parser')
+                        with _url_fetching_lock:
+                            _url_fetching.discard(url)
+                        return result
                     else:
                         from cache.redis_keys import flaresolverr_failure_key
                         failure_key = flaresolverr_failure_key(url)
@@ -207,6 +315,16 @@ class BaseScraper(ABC):
                                     skip_redis=self._is_test
                                 )
                                 if html_content:
+                                    # Salva no cache local primeiro
+                                    if not self._is_test:
+                                        try:
+                                            from cache.http_cache import get_http_cache
+                                            http_cache = get_http_cache()
+                                            http_cache.set(url, html_content)
+                                        except:
+                                            pass
+                                    
+                                    # Salva no Redis
                                     if self.redis and not self._is_test:
                                         try:
                                             self.redis.delete(failure_key)
@@ -226,7 +344,10 @@ class BaseScraper(ABC):
                                         except:
                                             pass
                                     
-                                    return BeautifulSoup(html_content, 'html.parser')
+                                    result = BeautifulSoup(html_content, 'html.parser')
+                                    with _url_fetching_lock:
+                                        _url_fetching.discard(url)
+                                    return result
                                 else:
                                     # Tenta Redis primeiro
                                     if self.redis and not self._is_test:
@@ -254,6 +375,16 @@ class BaseScraper(ABC):
             
             logger.debug(f"[BaseScraper] HTTP GET: {url[:60]}... | Status: {response.status_code} | Tempo: {elapsed_time:.2f}s | Tamanho: {len(html_content)} bytes | Origem: {'Cache' if elapsed_time < 0.5 else 'Site'}")
             
+            # Salva no cache local primeiro (mais rápido)
+            if not self._is_test:
+                try:
+                    from cache.http_cache import get_http_cache
+                    http_cache = get_http_cache()
+                    http_cache.set(url, html_content)
+                except:
+                    pass
+            
+            # Salva no Redis
             if self.redis and not self._is_test:
                 try:
                     short_cache_key = html_short_key(url)
@@ -272,13 +403,32 @@ class BaseScraper(ABC):
                 except:
                     pass
             
-            return BeautifulSoup(html_content, 'html.parser')
+            result = BeautifulSoup(html_content, 'html.parser')
+            with _url_fetching_lock:
+                _url_fetching.discard(url)
+            return result
         
         except Exception as e:
             error_type = type(e).__name__
             error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
-            url_preview = url[:50] if url else 'N/A'
-            logger.error(f"Document error: {error_type} - {error_msg} (url: {url_preview}...)")
+            
+            # Erros HTTP do servidor (500, 502, 503, 520, etc) são esperados e não indicam problema no nosso código
+            # Loga como WARNING em vez de ERROR
+            # A mensagem de erro HTTP já inclui a URL, então não precisamos duplicar
+            if error_type == 'HTTPError' and ('500' in error_msg or '502' in error_msg or '503' in error_msg or '520' in error_msg or '521' in error_msg or '522' in error_msg or '523' in error_msg or '524' in error_msg):
+                logger.warning(f"Document error: {error_type} - {error_msg}")
+            else:
+                # Para outros erros, adiciona a URL se não estiver na mensagem
+                url_preview = url[:50] if url else 'N/A'
+                if url and url not in error_msg:
+                    logger.error(f"Document error: {error_type} - {error_msg} (url: {url_preview}...)")
+                else:
+                    logger.error(f"Document error: {error_type} - {error_msg}")
+            
+            # Remove do conjunto de URLs sendo buscadas mesmo em caso de erro
+            with _url_fetching_lock:
+                _url_fetching.discard(url)
+            
             return None
     
     @abstractmethod
@@ -345,18 +495,14 @@ class BaseScraper(ABC):
             effective_max = get_effective_max_items(max_items)
             links = limit_list(links, effective_max)
             
-            if effective_max > 0:
-                all_torrents = process_links_sequential(
-                    links,
-                    self._get_torrents_from_page,
-                    None
-                )
-            else:
-                all_torrents = process_links_parallel(
-                    links,
-                    self._get_torrents_from_page,
-                    None
-                )
+            # SEMPRE usa paralelização para melhor performance (mesmo com limite)
+            # A lógica de limite é aplicada durante o processamento
+            all_torrents = process_links_parallel(
+                links,
+                self._get_torrents_from_page,
+                effective_max if effective_max > 0 else None,
+                max_workers=Config.SCRAPER_MAX_WORKERS if hasattr(Config, 'SCRAPER_MAX_WORKERS') else 16
+            )
             
             enriched = self.enrich_torrents(
                 all_torrents,
@@ -613,7 +759,7 @@ class BaseScraper(ABC):
             if metadata_enabled:
                 if torrent.get('_metadata') and 'size' in torrent['_metadata']:
                     try:
-                        from utils.text.text_processing import format_bytes
+                        from utils.text.utils import format_bytes
                         size_bytes = torrent['_metadata']['size']
                         formatted_size = format_bytes(size_bytes)
                         if formatted_size:

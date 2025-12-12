@@ -58,6 +58,9 @@ def setup_logging(log_level: int, log_format: str = 'console'):
     logging.getLogger('requests').setLevel(logging.WARNING)
     logging.getLogger('requests.packages.urllib3').setLevel(logging.ERROR)
     
+    # Silencia asyncio para reduzir verbosidade (logs de selector não são úteis)
+    logging.getLogger('asyncio').setLevel(logging.WARNING)
+    
     # Silencia werkzeug apenas se nível for alto (para não perder logs importantes do Flask)
     if log_level >= 2:  # warn ou error
         logging.getLogger('werkzeug').setLevel(logging.WARNING)
