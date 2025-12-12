@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DF Indexer - Busca de Torrents</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0a0a0a;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: #ffffff;
+            margin-bottom: 15px;
+        }
+
+        .header h1 {
+            font-size: 1.8em;
+            margin-bottom: 5px;
+            color: #ffffff;
+            font-weight: 700;
+        }
+
+        .header p {
+            font-size: 0.9em;
+            color: #b0b0b0;
+        }
+
+        .search-box {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .search-form {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .form-group {
+            flex: 1;
+            min-width: 200px;
+            position: relative;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 4px;
+            color: #e0e0e0;
+            font-weight: 600;
+            font-size: 0.85em;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 6px 8px;
+            background: #0f0f0f;
+            border: 1px solid #2a2a2a;
+            border-radius: 4px;
+            font-size: 0.9em;
+            color: #ffffff;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input[type="text"] {
+            padding-right: 30px;
+        }
+        
+        .clear-button {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            margin-top: 0;
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 1.2em;
+            line-height: 1;
+            padding: 0;
+            width: 18px;
+            height: 18px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s;
+            z-index: 1;
+            box-sizing: border-box;
+            font-weight: 300;
+        }
+        
+        .clear-button:hover {
+            color: #ffffff;
+        }
+        
+        .clear-button:active {
+            color: #4a9eff;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #4a9eff;
+        }
+
+        .form-group input::placeholder {
+            color: #666;
+        }
+
+        .btn-search {
+            padding: 6px 20px;
+            background: #4a9eff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            align-self: flex-end;
+        }
+
+        .btn-search:hover {
+            background: #3a8eef;
+        }
+
+        .btn-search:active {
+            background: #2a7edf;
+        }
+
+        .btn-search:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background: #2a2a2a;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 1.2em;
+            display: none;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255,255,255,0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .results {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 10px;
+            padding: 20px;
+            display: none;
+        }
+
+        .results.active {
+            display: block;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #2a2a2a;
+        }
+
+        .results-header h2 {
+            color: #ffffff;
+            font-size: 1.3em;
+            font-weight: 600;
+        }
+
+        .results-count {
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        .result-item {
+            background: #0f0f0f;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            border-left: 3px solid #4a9eff;
+            transition: border-color 0.2s, background 0.2s;
+        }
+
+        .result-item:hover {
+            border-color: #4a9eff;
+            background: #151515;
+        }
+
+        .result-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .result-table tr {
+            border-bottom: 1px solid #2a2a2a;
+        }
+
+        .result-table tr:last-child {
+            border-bottom: none;
+        }
+
+        .result-table td {
+            padding: 4px 0;
+            vertical-align: middle;
+            word-break: break-word;
+        }
+        
+        .result-table tr:last-child td {
+            vertical-align: middle;
+        }
+
+        .result-table td:first-child {
+            width: 50%;
+            padding-right: 10px;
+            color: #e0e0e0;
+            font-size: 0.85em;
+            white-space: normal;
+            overflow-wrap: break-word;
+        }
+
+        .result-table td:last-child {
+		    text-align: right;
+			width: 50%;
+            padding-left: 10px;
+            color: #e0e0e0;
+            font-size: 0.85em;
+            vertical-align: middle;
+        }
+        
+        .result-table tr:last-child td:first-child {
+            width: 75%;
+        }
+        
+        .result-table tr:last-child td:last-child {
+            width: 25%;
+        }
+		
+		.result-table tr:last-child td {
+            vertical-align: top;
+        }
+
+        .result-table tr:last-child td:last-child {
+            padding-bottom: 0 !important;
+        }
+        
+        .result-title {
+            font-size: 0.9em;
+            font-weight: 600;
+            color: #ffffff;
+            word-break: break-word;
+            line-height: 1.3;
+        }
+
+        .result-link {
+            font-size: 0.75em;
+            color: #4a9eff;
+            text-decoration: none;
+            word-break: break-all;
+            display: inline-block;
+            max-width: 100%;
+        }
+
+        .result-link:hover {
+            text-decoration: underline;
+            color: #5aaeff;
+        }
+
+        .detail-label {
+            font-size: 0.75em;
+            color: #888;
+            margin-right: 4px;
+        }
+
+        .detail-value {
+            font-size: 0.8em;
+            color: #e0e0e0;
+            font-weight: 500;
+        }
+        
+        .detail-value.magnet-name {
+            font-size: 0.85em;
+            font-weight: 600;
+            white-space: normal;
+            word-break: break-word;
+            display: inline-block;
+            max-width: 100%;
+            vertical-align: middle;
+        }
+
+        .detail-value.audio {
+            color: #4a9eff;
+        }
+
+        .detail-value.seeds {
+            color: #4caf50;
+        }
+
+        .detail-value.leech {
+            color: #f44336;
+        }
+
+        .detail-value.size {
+            color: #00bcd4;
+        }
+
+        .detail-value.hash {
+            font-family: 'Courier New', monospace;
+            font-size: 0.7em;
+            color: #888;
+            word-break: break-all;
+        }
+
+        .magnet-button {
+            display: inline-block;
+            padding: 5px 10px;
+            background-color: #4caf50;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: 600;
+            transition: background-color 0.2s, transform 0.2s;
+            margin-left: 8px;
+        }
+
+        .magnet-button:hover {
+            background-color: #45a049;
+            transform: translateY(-1px);
+        }
+
+        .magnet-button:active {
+            transform: translateY(0);
+        }
+
+        .scrapers-container {
+            background: #0f0f0f;
+            border: 1px solid #2a2a2a;
+            border-radius: 4px;
+            padding: 8px 12px;
+        }
+
+        .scrapers-grid {
+            display: flex;
+            flex-wrap: nowrap;
+            gap: 8px;
+            align-items: center;
+            overflow-x: auto;
+        }
+        
+        #scrapersList {
+            display: flex;
+            flex-wrap: nowrap;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .checkbox-wrapper {
+            display: inline-flex;
+            align-items: center;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .checkbox-wrapper input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            margin: 0 4px 0 0;
+            cursor: pointer;
+            accent-color: #4a9eff;
+            flex-shrink: 0;
+        }
+
+        .checkbox-wrapper label {
+            cursor: pointer;
+            color: #e0e0e0;
+            font-size: 0.85em;
+            user-select: none;
+            margin: 0;
+            white-space: nowrap;
+        }
+
+        .checkbox-wrapper:hover label {
+            color: #4a9eff;
+        }
+
+        .select-all-wrapper {
+            padding-right: 8px;
+            margin-right: 8px;
+            border-right: 1px solid #2a2a2a;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 40px 20px;
+            color: #888;
+        }
+
+        .no-results h3 {
+            font-size: 1.2em;
+            margin-bottom: 10px;
+            color: #e0e0e0;
+        }
+
+        .error {
+            background: #2a1a1a;
+            border: 1px solid #4a2a2a;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: #ff6b6b;
+            display: none;
+        }
+
+        .error.active {
+            display: block;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding: 20px;
+            color: #888;
+            font-size: 0.85em;
+            border-top: 1px solid #2a2a2a;
+        }
+
+        .footer-content {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .footer-stat {
+            color: #4a9eff;
+            font-weight: 600;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 2em;
+            }
+
+            .search-form {
+                flex-direction: column;
+            }
+
+            .btn-search {
+                width: 100%;
+            }
+
+            .result-details {
+                grid-template-columns: 1fr;
+            }
+
+            .footer-content {
+                flex-direction: column;
+                gap: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 DF Indexer</h1>
+            <p>Busca de Torrents Brasileiros</p>
+        </div>
+
+        <div class="search-box">
+            <form id="searchForm" class="search-form">
+                <div class="form-group">
+                    <label for="query">Buscar:</label>
+                    <input type="text" id="query" name="query" placeholder="Digite o nome do filme ou série..." required>
+                    <button type="button" class="clear-button" id="clearButton" style="display: none;" title="Limpar busca">×</button>
+                </div>
+                <div class="form-group" style="flex: 1 1 100%;">
+                    <label>Sites:</label>
+                    <div class="scrapers-container">
+                        <div class="scrapers-grid">
+                            <div class="checkbox-wrapper select-all-wrapper">
+                                <input type="checkbox" id="selectAll">
+                                <label for="selectAll">Todos</label>
+                            </div>
+                            <div id="scrapersList" style="display: contents;"></div>
+                        </div>
+                    </div>
+                </div>
+                <button type="submit" class="btn-search" id="searchBtn">Buscar</button>
+            </form>
+        </div>
+
+        <div class="error" id="errorBox"></div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Buscando torrents...</p>
+        </div>
+
+        <div class="results" id="results">
+            <div class="results-header">
+                <h2>Resultados</h2>
+                <div class="results-count" id="resultsCount"></div>
+            </div>
+            <div id="resultsList"></div>
+        </div>
+
+        <div class="footer">
+            <div class="footer-content">
+                <span>DF Indexer © 2025</span>
+                <span>|</span>
+                <span>Torrents Indexados: <span class="footer-stat" id="indexedCount">Carregando...</span></span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Carrega lista de sites disponíveis
+        async function loadSites() {
+            try {
+                const response = await fetch('/');
+                const data = await response.json();
+                const scrapersList = document.getElementById('scrapersList');
+                const selectAllCheckbox = document.getElementById('selectAll');
+                
+                if (data.available_types && Array.isArray(data.available_types)) {
+                    // Limpa lista anterior
+                    scrapersList.innerHTML = '';
+                    
+                    // Cria checkbox para cada scraper
+                    data.available_types.forEach(site => {
+                        const wrapper = document.createElement('div');
+                        wrapper.className = 'checkbox-wrapper';
+                        
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        checkbox.id = `site_${site}`;
+                        checkbox.value = site;
+                        checkbox.name = 'scraper';
+                        // Starck como padrão
+                        if (site.toLowerCase() === 'starck') {
+                            checkbox.checked = true;
+                        }
+                        
+                        const label = document.createElement('label');
+                        label.htmlFor = `site_${site}`;
+                        label.textContent = site.charAt(0).toUpperCase() + site.slice(1);
+                        
+                        wrapper.appendChild(checkbox);
+                        wrapper.appendChild(label);
+                        scrapersList.appendChild(wrapper);
+                    });
+                    
+                    // Atualiza estado do "Todos" baseado nas seleções
+                    updateSelectAllState();
+                    
+                    // Event listener para "Todos"
+                    selectAllCheckbox.addEventListener('change', (e) => {
+                        const checkboxes = document.querySelectorAll('input[name="scraper"]');
+                        checkboxes.forEach(cb => {
+                            cb.checked = e.target.checked;
+                        });
+                    });
+                    
+                    // Event listener para cada checkbox individual
+                    scrapersList.addEventListener('change', (e) => {
+                        if (e.target.name === 'scraper') {
+                            updateSelectAllState();
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Erro ao carregar sites:', error);
+            }
+        }
+        
+        // Atualiza estado do checkbox "Todos"
+        function updateSelectAllState() {
+            const checkboxes = document.querySelectorAll('input[name="scraper"]');
+            const selectAllCheckbox = document.getElementById('selectAll');
+            const checkedCount = Array.from(checkboxes).filter(cb => cb.checked).length;
+            
+            if (checkedCount === 0) {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = false;
+            } else if (checkedCount === checkboxes.length) {
+                selectAllCheckbox.checked = true;
+                selectAllCheckbox.indeterminate = false;
+            } else {
+                selectAllCheckbox.checked = false;
+                selectAllCheckbox.indeterminate = true;
+            }
+        }
+        
+        // Obtém scrapers selecionados
+        function getSelectedScrapers() {
+            const checkboxes = document.querySelectorAll('input[name="scraper"]:checked');
+            return Array.from(checkboxes).map(cb => cb.value);
+        }
+
+        // Extrai tags de áudio e legenda do título
+        function extractAudioTags(title) {
+            const idiomas = [];
+            const legendas = [];
+            
+            if (title.includes('[Brazilian]')) idiomas.push('Português');
+            if (title.includes('[Eng]')) idiomas.push('Inglês');
+            if (title.includes('[Leg]')) legendas.push('Português');
+            
+            // Mantém o título completo com as tags (título finalizado)
+            const finalTitle = title.trim();
+            
+            return { finalTitle, idiomas, legendas };
+        }
+
+        // Formata tamanho
+        function formatSize(size) {
+            if (!size || size === 'N/A') return 'N/A';
+            return size;
+        }
+
+        // Formata número
+        function formatNumber(num) {
+            if (num === null || num === undefined || num === 'N/A') return 'N/A';
+            return num.toString();
+        }
+
+        // Formata URL para exibir apenas domínio + "..."
+        function formatUrl(url) {
+            if (!url || url === '#') return 'N/A';
+            try {
+                const urlObj = new URL(url);
+                return `${urlObj.origin}/...`;
+            } catch (e) {
+                // Se não conseguir fazer parse, tenta extrair domínio manualmente
+                const match = url.match(/^https?:\/\/([^\/]+)/);
+                if (match) {
+                    return `${match[0]}/...`;
+                }
+                return url.length > 50 ? url.substring(0, 50) + '...' : url;
+            }
+        }
+
+        // Função para truncar texto longo
+        function truncateText(text, maxLength = 80) {
+            if (!text || text === 'N/A') return text;
+            if (text.length <= maxLength) return text;
+            return text.substring(0, maxLength) + '...';
+        }
+
+        // Renderiza TODOS os resultados filtrados (sem limite)
+        function renderResults(torrents) {
+            const resultsList = document.getElementById('resultsList');
+            const resultsCount = document.getElementById('resultsCount');
+            
+            // Exibe contagem total de resultados filtrados
+            resultsCount.textContent = `${torrents.length} resultado(s) encontrado(s)`;
+            
+            if (torrents.length === 0) {
+                resultsList.innerHTML = `
+                    <div class="no-results">
+                        <h3>Nenhum resultado encontrado</h3>
+                        <p>Tente buscar com outros termos ou verifique a ortografia.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // Renderiza TODOS os resultados sem limite ou paginação
+            resultsList.innerHTML = torrents.map(torrent => {
+                const { finalTitle, idiomas, legendas } = extractAudioTags(torrent.title || '');
+                const idiomasStr = idiomas.length > 0 ? idiomas.join(' | ') : 'N/A';
+                const legendaStr = legendas.length > 0 ? legendas.join(' | ') : 'N/A';
+                
+                const detailsUrl = torrent.details || '#';
+                const magnetLink = torrent.magnet || torrent.magnet_link || '#';
+                const formattedUrl = formatUrl(detailsUrl);
+                
+                const seeds = formatNumber(torrent.tracker_seed !== undefined ? torrent.tracker_seed : (torrent.seed_count !== undefined ? torrent.seed_count : 0));
+                const leech = formatNumber(torrent.tracker_leech !== undefined ? torrent.tracker_leech : (torrent.leech_count !== undefined ? torrent.leech_count : 0));
+                const size = formatSize(torrent.size);
+                const hash = torrent.info_hash || 'N/A';
+                const releaseTitleMagnet = torrent.release_title_magnet || 'N/A';
+                
+                return `
+                    <div class="result-item">
+                        <table class="result-table">
+                            <tr>
+                                <td><span class="detail-label">Title:</span> <span class="detail-value title">${finalTitle}</span></td>
+                                <td>
+                                    ${detailsUrl !== '#' ? `<a href="${detailsUrl}" target="_blank" class="result-link" title="${detailsUrl}">${formattedUrl}</a>` : 'N/A'}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><span class="detail-label">Áudio:</span> <span class="detail-value audio">${idiomasStr}</span></td>
+                                <td><span class="detail-label">Hash:</span> <span class="detail-value hash">${hash}</span></td>
+                            </tr>
+                            <tr>
+                                <td><span class="detail-label">Legenda:</span> <span class="detail-value audio">${legendaStr}</span></td>
+                                <td><span class="detail-label">Seeds:</span> <span class="detail-value seeds">${seeds}</span> | <span class="detail-label">Leech:</span> <span class="detail-value leech">${leech}</span> | <span class="detail-label">Size:</span> <span class="detail-value size">${size}</span></td>
+                            </tr>
+                            <tr>
+                                <td>
+                                    <span class="detail-label">Nome Magnet:</span>
+                                    <span class="detail-value magnet-name" title="${releaseTitleMagnet}">${releaseTitleMagnet}</span>
+                                </td>
+                                <td>
+                                    ${magnetLink !== '#' ? `<a href="${magnetLink}" class="magnet-button">Download Magnet</a>` : ''}
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Mostra erro
+        function showError(message) {
+            const errorBox = document.getElementById('errorBox');
+            errorBox.textContent = message;
+            errorBox.classList.add('active');
+            setTimeout(() => {
+                errorBox.classList.remove('active');
+            }, 5000);
+        }
+
+        // Busca torrents
+        async function searchTorrents(query, selectedScrapers) {
+            const loading = document.getElementById('loading');
+            const results = document.getElementById('results');
+            const searchBtn = document.getElementById('searchBtn');
+            
+            loading.classList.add('active');
+            results.classList.remove('active');
+            searchBtn.disabled = true;
+            
+            try {
+                let allResults = [];
+                
+                // Se nenhum scraper selecionado ou todos selecionados, busca em todos
+                if (selectedScrapers.length === 0 || selectedScrapers.length === document.querySelectorAll('.scraper-checkbox[name="scraper"]').length) {
+                    const url = `/indexer?q=${encodeURIComponent(query)}&filter_results=true`;
+                    const response = await fetch(url);
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        showError(data.error);
+                        return;
+                    }
+                    
+                    allResults = data.results || [];
+                } else {
+                    // Busca em cada scraper selecionado
+                    const promises = selectedScrapers.map(async (site) => {
+                        try {
+                            const url = `/indexers/${site}?q=${encodeURIComponent(query)}&filter_results=true`;
+                            const response = await fetch(url);
+                            const data = await response.json();
+                            return data.results || [];
+                        } catch (error) {
+                            console.error(`Erro ao buscar em ${site}:`, error);
+                            return [];
+                        }
+                    });
+                    
+                    const resultsArray = await Promise.all(promises);
+                    allResults = resultsArray.flat();
+                    
+                    // Remove duplicados baseado em info_hash
+                    const seenHashes = new Set();
+                    allResults = allResults.filter(torrent => {
+                        const hash = (torrent.info_hash || '').toLowerCase();
+                        if (hash && hash.length === 40) {
+                            if (seenHashes.has(hash)) {
+                                return false;
+                            }
+                            seenHashes.add(hash);
+                        }
+                        return true;
+                    });
+                    
+                    // Ordena por data (mais recente primeiro)
+                    allResults.sort((a, b) => {
+                        const dateA = new Date(a.date || 0);
+                        const dateB = new Date(b.date || 0);
+                        return dateB - dateA;
+                    });
+                }
+                
+                renderResults(allResults);
+                results.classList.add('active');
+            } catch (error) {
+                showError('Erro ao buscar torrents. Tente novamente.');
+                console.error('Erro:', error);
+            } finally {
+                loading.classList.remove('active');
+                searchBtn.disabled = false;
+            }
+        }
+
+        // Event listeners
+        const queryInput = document.getElementById('query');
+        const clearButton = document.getElementById('clearButton');
+        
+        // Mostra/oculta botão de limpar baseado no conteúdo do input
+        function toggleClearButton() {
+            if (queryInput.value.trim().length > 0) {
+                clearButton.style.display = 'flex';
+            } else {
+                clearButton.style.display = 'none';
+            }
+        }
+        
+        // Event listener para mostrar/ocultar botão de limpar
+        queryInput.addEventListener('input', toggleClearButton);
+        queryInput.addEventListener('keyup', toggleClearButton);
+        
+        // Event listener para limpar o campo
+        clearButton.addEventListener('click', () => {
+            queryInput.value = '';
+            queryInput.focus();
+            clearButton.style.display = 'none';
+        });
+        
+        document.getElementById('searchForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const query = queryInput.value.trim();
+            const selectedScrapers = getSelectedScrapers();
+            
+            if (!query) {
+                showError('Por favor, digite um termo de busca.');
+                return;
+            }
+            
+            searchTorrents(query, selectedScrapers);
+        });
+
+        // Carrega contagem de torrents indexados
+        async function loadIndexedCount() {
+            try {
+                const response = await fetch('/');
+                const data = await response.json();
+                const indexedCount = data.indexed_torrents || 0;
+                
+                // Formata número com separador de milhares
+                const formattedCount = indexedCount.toLocaleString('pt-BR');
+                document.getElementById('indexedCount').textContent = formattedCount;
+            } catch (error) {
+                console.error('Erro ao carregar contagem:', error);
+                document.getElementById('indexedCount').textContent = 'N/A';
+            }
+        }
+
+        // Carrega sites ao carregar a página
+        loadSites();
+        loadIndexedCount();
+    </script>
+</body>
+</html>
