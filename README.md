@@ -198,7 +198,9 @@ O comportamento varia conforme o tipo de requisição:
 http://localhost:7006/api
 
 ** Atenção - Selecionar todos pode demorar ou travar devido a demora de requisições.
+
 ** Principamente com os sites que usam Cloudflare
+
 <img width="1252" height="819" alt="image" src="https://github.com/user-attachments/assets/423073ad-33eb-4459-ae29-1cd720bbee2e" />
 
 ### 🔍 API Endpoints
