@@ -6,7 +6,7 @@ import re
 import logging
 from datetime import datetime
 from utils.parsing.date_parser import parse_date_from_string
-from typing import List, Dict, Optional, Callable, Tuple
+from typing import List, Dict, Optional, Callable
 from urllib.parse import quote, urljoin
 from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
@@ -28,7 +28,7 @@ _log_ctx = ScraperLogContext("Nerd", logger)
 # Scraper específico para Nerd Torrent HD
 class NerdScraper(BaseScraper):
     SCRAPER_TYPE = "nerd"
-    DEFAULT_BASE_URL = "https://nerdtorrenthd.net/"
+    DEFAULT_BASE_URL = "https://portalfilmes.com/"
     DISPLAY_NAME = "Nerd"
     
     def __init__(self, base_url: Optional[str] = None, use_flaresolverr: bool = False):
@@ -40,78 +40,67 @@ class NerdScraper(BaseScraper):
     def search(self, query: str, filter_func: Optional[Callable[[Dict], bool]] = None) -> List[Dict]:
         return self._default_search(query, filter_func)
     
-    # Extrai links da página inicial (lógica especial para separar filmes, séries e animes)
-    def _extract_links_from_page(self, doc: BeautifulSoup) -> Tuple[List[str], List[str], List[str]]:
-        # Separa links de filmes, séries e animes dentro das seções específicas
-        filmes_links = []
-        series_links = []
-        animes_links = []
+    # Extrai links da página inicial - busca apenas "Últimos Adicionados!"
+    def _extract_links_from_page(self, doc: BeautifulSoup) -> List[str]:
+        links = []
         
-        # Encontra a seção "Últimos Filmes Torrent"
-        filmes_h2 = None
+        # Encontra a seção "Últimos Adicionados!"
+        ultimos_h2 = None
         for h2 in doc.find_all('h2', class_='titulo-bloco'):
-            if 'Últimos Filmes Torrent' in h2.get_text():
-                filmes_h2 = h2
+            if 'Últimos Adicionados' in h2.get_text():
+                ultimos_h2 = h2
                 break
         
-        if filmes_h2:
+        if ultimos_h2:
             # Encontra o container pai (section.filmes)
-            filmes_section = filmes_h2.find_parent('section', class_='filmes')
-            if filmes_section:
+            section = ultimos_h2.find_parent('section', class_='filmes')
+            if section:
                 # Pega todos os links dentro de .listagem > article.item > a
-                listagem = filmes_section.find('div', class_='listagem')
+                listagem = section.find('div', class_='listagem')
                 if listagem:
                     for item in listagem.find_all('article', class_='item'):
                         link_elem = item.find('a')
                         if link_elem:
                             href = link_elem.get('href')
                             if href:
-                                filmes_links.append(href)
+                                # Converte URL relativa para absoluta
+                                absolute_url = urljoin(self.base_url, href)
+                                if absolute_url not in links:
+                                    links.append(absolute_url)
         
-        # Encontra a seção "Últimas Séries Torrent"
-        series_h2 = None
-        for h2 in doc.find_all('h2', class_='titulo-bloco'):
-            if 'Últimas Séries Torrent' in h2.get_text():
-                series_h2 = h2
-                break
+        # Fallback: Se não encontrou a seção específica, usa seletores genéricos
+        if not links:
+            _log_ctx.info("Seção 'Últimos Adicionados!' não encontrada - usando fallback genérico")
+            
+            # Tenta primeiro os seletores específicos do site (estrutura da página inicial)
+            for item in doc.select('.listagem .item a'):
+                href = item.get('href')
+                if href:
+                    absolute_url = urljoin(self.base_url, href)
+                    if absolute_url not in links:
+                        links.append(absolute_url)
+            
+            # Se não encontrou com seletor específico, tenta alternativos
+            if not links:
+                for item in doc.select('div.listagem div.item a'):
+                    href = item.get('href')
+                    if href:
+                        absolute_url = urljoin(self.base_url, href)
+                        if absolute_url not in links:
+                            links.append(absolute_url)
+            
+            # Fallback: tenta seletores WordPress comuns
+            if not links:
+                for article in doc.select('article.post'):
+                    link_elem = article.select_one('h2.entry-title a, h1.entry-title a, header.entry-header a')
+                    if link_elem:
+                        href = link_elem.get('href')
+                        if href:
+                            absolute_url = urljoin(self.base_url, href)
+                            if absolute_url not in links:
+                                links.append(absolute_url)
         
-        if series_h2:
-            # Encontra o container pai (section.filmes)
-            series_section = series_h2.find_parent('section', class_='filmes')
-            if series_section:
-                # Pega todos os links dentro de .listagem > article.item > a
-                listagem = series_section.find('div', class_='listagem')
-                if listagem:
-                    for item in listagem.find_all('article', class_='item'):
-                        link_elem = item.find('a')
-                        if link_elem:
-                            href = link_elem.get('href')
-                            if href:
-                                series_links.append(href)
-        
-        # Encontra a seção "Ultimos Animes Torrent"
-        animes_h2 = None
-        for h2 in doc.find_all('h2', class_='titulo-bloco'):
-            if 'Ultimos Animes Torrent' in h2.get_text() or 'Últimos Animes Torrent' in h2.get_text():
-                animes_h2 = h2
-                break
-        
-        if animes_h2:
-            # Encontra o container pai (section.filmes)
-            animes_section = animes_h2.find_parent('section', class_='filmes')
-            if animes_section:
-                # Pega todos os links dentro de .listagem > article.item > a
-                listagem = animes_section.find('div', class_='listagem')
-                if listagem:
-                    for item in listagem.find_all('article', class_='item'):
-                        link_elem = item.find('a')
-                        if link_elem:
-                            href = link_elem.get('href')
-                            if href:
-                                animes_links.append(href)
-        
-        # Retorna tupla com filmes, séries e animes separados
-        return (filmes_links, series_links, animes_links)
+        return links
     
     # Obtém torrents de uma página específica (usa helper padrão com extração customizada)
     def get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
@@ -130,28 +119,18 @@ class NerdScraper(BaseScraper):
             if not doc:
                 return []
             
-            # Extrai links usando método específico do scraper (retorna tupla separada)
-            filmes_links, series_links, animes_links = self._extract_links_from_page(doc)
+            # Extrai links usando método específico do scraper (retorna lista única)
+            links = self._extract_links_from_page(doc)
             
             # Obtém limite efetivo usando função utilitária
             effective_max = get_effective_max_items(max_items)
             
-            # Quando há limite configurado, coleta um terço de cada seção
-            # Caso contrário, coleta todos de todas as seções
+            # Quando há limite configurado, limita a lista de links
             if effective_max > 0:
-                # Calcula um terço do limite para cada seção
-                third_limit = max(1, effective_max // 3)
-                
-                # Limita cada seção a um terço
-                filmes_links = limit_list(filmes_links, third_limit)
-                series_links = limit_list(series_links, third_limit)
-                animes_links = limit_list(animes_links, third_limit)
-                
-                _log_ctx.info(f"Limite configurado: {effective_max} - Coletando {len(filmes_links)} filmes, {len(series_links)} séries e {len(animes_links)} animes")
-                links = filmes_links + series_links + animes_links
+                links = limit_list(links, effective_max)
+                _log_ctx.info(f"Limite configurado: {effective_max} - Coletando {len(links)} itens de 'Últimos Adicionados!'")
             else:
-                # Sem limite, combina todos os links
-                links = filmes_links + series_links + animes_links
+                _log_ctx.info(f"Coletando {len(links)} itens de 'Últimos Adicionados!' (sem limite)")
             
             # Quando há limite configurado, processa sequencialmente para manter ordem original
             # Caso contrário, processa em paralelo para melhor performance
