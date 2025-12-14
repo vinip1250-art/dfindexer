@@ -381,13 +381,16 @@ class FlareSolverrClient:
                 html_content = solution.get("response", "")
                 
                 if html_content:
+                    content_length = len(html_content)
+                    logger.debug(f"FlareSolverr: resposta recebida para {url[:50]}... ({content_length} caracteres)")
                     return html_content.encode('utf-8')
                 else:
-                    logger.warning(f"FlareSolverr retornou resposta vazia para {url}")
+                    logger.warning(f"FlareSolverr retornou resposta vazia para {url[:50]}... (status=ok mas response vazio)")
                     return None
             else:
                 error_msg = result.get("message", "Erro desconhecido")
-                logger.warning(f"FlareSolverr retornou erro para {url}: {error_msg}")
+                status = result.get("status", "unknown")
+                logger.warning(f"FlareSolverr retornou erro para {url[:50]}...: status={status}, message={error_msg[:100]}")
                 
                 # Invalida sessão apenas se o erro indicar problema específico com a sessão
                 # NÃO invalida por problemas temporários do Chrome/FlareSolverr

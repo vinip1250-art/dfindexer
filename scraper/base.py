@@ -215,12 +215,23 @@ class BaseScraper(ABC):
             "%3a" not in url.lower()
         )
         
+        # Log para debug: verifica se FlareSolverr deveria ser usado
+        if self.use_flaresolverr and not use_flaresolverr_for_this_url:
+            if not self.flaresolverr_client:
+                logger.debug(f"FlareSolverr habilitado mas cliente não disponível para {url[:50]}...")
+            elif "%3A" in url or "%3a" in url.lower():
+                logger.debug(f"FlareSolverr pulado: URL contém %3A para {url[:50]}...")
+        
         if use_flaresolverr_for_this_url:
             try:
                 session_id = self.flaresolverr_client.get_or_create_session(
                     self.base_url,
                     skip_redis=self._is_test
                 )
+                if session_id:
+                    pass  # Sessão obtida com sucesso
+                else:
+                    logger.warning(f"FlareSolverr: não foi possível obter/criar sessão para {url[:50]}... - tentando requisição direta (pode resultar em 403)")
                 if session_id:
                     html_content = self.flaresolverr_client.solve(
                         url,
@@ -230,6 +241,7 @@ class BaseScraper(ABC):
                         skip_redis=self._is_test
                     )
                     if html_content:
+                        logger.debug(f"FlareSolverr: sucesso para {url[:50]}... ({len(html_content)} bytes)")
                         # Salva no cache local primeiro (mais rápido)
                         if not self._is_test:
                             try:
@@ -263,6 +275,7 @@ class BaseScraper(ABC):
                             _url_fetching.discard(url)
                         return result
                     else:
+                        logger.warning(f"FlareSolverr: retornou None para {url[:50]}... - tentando retry ou requisição direta")
                         from cache.redis_keys import flaresolverr_failure_key
                         failure_key = flaresolverr_failure_key(url)
                         should_retry = True
@@ -362,6 +375,96 @@ class BaseScraper(ABC):
                                         _request_cache.flaresolverr_failures[failure_key] = time.time() + 300  # 5 minutos
             except Exception as e:
                 logger.debug(f"FlareSolverr error: {type(e).__name__} - tentando requisição direta")
+        
+        # Se FlareSolverr está habilitado mas ainda não tentou (ou falhou anteriormente),
+        # verifica se o cache de falha expirou e tenta novamente antes de fazer requisição direta
+        if use_flaresolverr_for_this_url and not html_content:
+            from cache.redis_keys import flaresolverr_failure_key
+            failure_key = flaresolverr_failure_key(url)
+            should_try_flaresolverr = True
+            
+            # Verifica se há cache de falha ainda ativo
+            if self.redis and not self._is_test:
+                try:
+                    if self.redis.exists(failure_key):
+                        logger.debug(f"FlareSolverr: URL ainda marcada como falha - pulando tentativa")
+                        should_try_flaresolverr = False
+                except Exception:
+                    pass
+            elif not self.redis and not self._is_test:
+                if hasattr(_request_cache, 'flaresolverr_failures'):
+                    expire_at = _request_cache.flaresolverr_failures.get(failure_key, 0)
+                    if time.time() < expire_at:
+                        logger.debug(f"FlareSolverr: URL ainda marcada como falha (memória) - pulando tentativa")
+                        should_try_flaresolverr = False
+            
+            # Se o cache de falha expirou, tenta novamente com FlareSolverr
+            if should_try_flaresolverr and self.flaresolverr_client:
+                try:
+                    logger.debug(f"FlareSolverr: cache de falha expirado - tentando novamente para {url[:50]}...")
+                    session_id = self.flaresolverr_client.get_or_create_session(
+                        self.base_url,
+                        skip_redis=self._is_test
+                    )
+                    if session_id:
+                        html_content = self.flaresolverr_client.solve(
+                            url,
+                            session_id,
+                            referer if referer else self.base_url,
+                            self.base_url,
+                            skip_redis=self._is_test
+                        )
+                        if html_content:
+                            # Salva no cache local primeiro
+                            if not self._is_test:
+                                try:
+                                    from cache.http_cache import get_http_cache
+                                    http_cache = get_http_cache()
+                                    http_cache.set(url, html_content)
+                                except:
+                                    pass
+                            
+                            # Salva no Redis e remove cache de falha
+                            if self.redis and not self._is_test:
+                                try:
+                                    self.redis.delete(failure_key)
+                                    short_cache_key = html_short_key(url)
+                                    self.redis.setex(
+                                        short_cache_key,
+                                        Config.HTML_CACHE_TTL_SHORT,
+                                        html_content
+                                    )
+                                    
+                                    cache_key = html_long_key(url)
+                                    self.redis.setex(
+                                        cache_key,
+                                        Config.HTML_CACHE_TTL_LONG,
+                                        html_content
+                                    )
+                                except:
+                                    pass
+                            
+                            result = BeautifulSoup(html_content, 'html.parser')
+                            with _url_fetching_lock:
+                                _url_fetching.discard(url)
+                            return result
+                        else:
+                            # Marca como falha novamente
+                            if self.redis and not self._is_test:
+                                try:
+                                    self.redis.setex(failure_key, 300, "1")
+                                except:
+                                    pass
+                            elif not self.redis and not self._is_test:
+                                if not hasattr(_request_cache, 'flaresolverr_failures'):
+                                    _request_cache.flaresolverr_failures = {}
+                                _request_cache.flaresolverr_failures[failure_key] = time.time() + 300
+                except Exception as e:
+                    logger.debug(f"FlareSolverr retry error: {type(e).__name__} - tentando requisição direta")
+        
+        # Se FlareSolverr está habilitado mas não foi usado, loga aviso
+        if self.use_flaresolverr and not html_content:
+            logger.warning(f"FlareSolverr habilitado mas requisição direta será feita para {url[:50]}... (pode resultar em 403)")
         
         headers = {'Referer': referer if referer else self.base_url}
         

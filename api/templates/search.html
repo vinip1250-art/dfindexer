@@ -629,6 +629,8 @@
                 
                 if (data.available_types && Array.isArray(data.available_types)) {
                     scrapersList.innerHTML = '';
+                    console.log('[DEBUG] Scrapers disponíveis:', data.available_types);
+                    console.log('[DEBUG] Configuração FlareSolverr:', FLARESOLVERR_CONFIG);
                     data.available_types.forEach(site => {
                         const wrapper = document.createElement('div');
                         wrapper.className = 'checkbox-wrapper';
@@ -675,7 +677,9 @@
         }
         
         function getSelectedScrapers() {
-            return Array.from(document.querySelectorAll('input[name="scraper"]:checked')).map(cb => cb.value);
+            const selected = Array.from(document.querySelectorAll('input[name="scraper"]:checked')).map(cb => cb.value);
+            console.log('[DEBUG] Scrapers selecionados:', selected);
+            return selected;
         }
 
         function extractAudioTags(title) {
@@ -744,6 +748,22 @@
             setTimeout(() => errorBox.classList.remove('active'), 5000);
         }
 
+        // ============================================================================
+        // CONFIGURAÇÃO FLARESOLVERR POR SCRAPER
+        // ============================================================================
+        // Configure aqui o FlareSolverr para cada scraper (true ou false)
+        // IMPORTANTE: Use o nome exato do scraper em minúsculas como vem da API
+        const FLARESOLVERR_CONFIG = {
+            'starck': false,
+            'comand': true,      // Comando precisa de FlareSolverr (Cloudflare)
+            'bludv': true,       // Bludv precisa de FlareSolverr (Cloudflare)
+            'baixafilmes': false,
+            'nerd': false,
+            'tfilme': false,
+            'rede': false
+        };
+        // ============================================================================
+
         async function searchTorrents(query, selectedScrapers) {
             const loading = document.getElementById('loading');
             const results = document.getElementById('results');
@@ -753,38 +773,63 @@
             searchBtn.disabled = true;
             try {
                 let allResults = [];
-                if (selectedScrapers.length === 0 || selectedScrapers.length === document.querySelectorAll('input[name="scraper"]').length) {
-                    const response = await fetch(`/indexer?q=${encodeURIComponent(query)}&filter_results=true`);
-                    const data = await response.json();
-                    if (data.error) {
-                        showError(data.error);
-                        return;
-                    }
-                    allResults = data.results || [];
+                
+                // Determina quais scrapers buscar
+                let scrapersToSearch = [];
+                const allScrapers = Array.from(document.querySelectorAll('input[name="scraper"]')).map(cb => cb.value);
+                
+                if (selectedScrapers.length === 0 || selectedScrapers.length === allScrapers.length) {
+                    // Busca em todos os scrapers
+                    scrapersToSearch = allScrapers;
                 } else {
-                    const promises = selectedScrapers.map(async (site) => {
-                        try {
-                            const response = await fetch(`/indexers/${site}?q=${encodeURIComponent(query)}&filter_results=true`);
-                            const data = await response.json();
-                            return data.results || [];
-                        } catch (error) {
-                            console.error(`Erro ao buscar em ${site}:`, error);
-                            return [];
-                        }
-                    });
-                    const resultsArray = await Promise.all(promises);
-                    allResults = resultsArray.flat();
-                    const seenHashes = new Set();
-                    allResults = allResults.filter(torrent => {
-                        const hash = (torrent.info_hash || '').toLowerCase();
-                        if (hash && hash.length === 40) {
-                            if (seenHashes.has(hash)) return false;
-                            seenHashes.add(hash);
-                        }
-                        return true;
-                    });
-                    allResults.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+                    // Busca apenas nos selecionados
+                    scrapersToSearch = selectedScrapers;
                 }
+                
+                // Garante que há scrapers para buscar
+                if (scrapersToSearch.length === 0) {
+                    showError('Por favor, selecione pelo menos um site de busca.');
+                    return;
+                }
+                
+                console.log(`[DEBUG] Buscando em ${scrapersToSearch.length} scraper(s):`, scrapersToSearch);
+                
+                // Sempre faz requisições individuais para poder aplicar FlareSolverr por scraper
+                const promises = scrapersToSearch.map(async (site) => {
+                    try {
+                        // Obtém configuração de FlareSolverr para este scraper (padrão: false)
+                        const siteLower = site.toLowerCase();
+                        const configValue = FLARESOLVERR_CONFIG[siteLower];
+                        const useFlareSolverr = configValue === true; // Garante que só usa se for explicitamente true
+                        const flaresolverrParam = useFlareSolverr ? '&use_flaresolverr=true' : '&use_flaresolverr=false';
+                        const url = `/indexers/${site}?q=${encodeURIComponent(query)}&filter_results=true${flaresolverrParam}`;
+                        console.log(`[FlareSolverr] Scraper: ${site} | Lower: ${siteLower} | Config: ${configValue} | Use: ${useFlareSolverr}`);
+                        const response = await fetch(url);
+                        const data = await response.json();
+                        return data.results || [];
+                    } catch (error) {
+                        console.error(`Erro ao buscar em ${site}:`, error);
+                        return [];
+                    }
+                });
+                
+                // Aguarda todas as requisições e processa resultados
+                const resultsArray = await Promise.all(promises);
+                allResults = resultsArray.flat();
+                
+                // Remove duplicados por info_hash
+                const seenHashes = new Set();
+                allResults = allResults.filter(torrent => {
+                    const hash = (torrent.info_hash || '').toLowerCase();
+                    if (hash && hash.length === 40) {
+                        if (seenHashes.has(hash)) return false;
+                        seenHashes.add(hash);
+                    }
+                    return true;
+                });
+                
+                // Ordena por data (mais recente primeiro)
+                allResults.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
                 renderResults(allResults);
                 results.classList.add('active');
             } catch (error) {

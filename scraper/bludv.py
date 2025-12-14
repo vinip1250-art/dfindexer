@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Scraper específico para Bludv Filmes
 class BludvScraper(BaseScraper):
     SCRAPER_TYPE = "bludv"
-    DEFAULT_BASE_URL = "https://bludv.net/"
+    DEFAULT_BASE_URL = "https://bludv-v1.xyz/"
     DISPLAY_NAME = "Bludv"
     
     def __init__(self, base_url: Optional[str] = None, use_flaresolverr: bool = False):

@@ -17,6 +17,7 @@ Dockerfile
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
 *.so
 .Python
 *.egg-info/
