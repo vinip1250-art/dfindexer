@@ -6,12 +6,11 @@ import re
 import logging
 from datetime import datetime
 from typing import List, Dict, Optional, Callable
-from urllib.parse import quote, unquote, urljoin
+from urllib.parse import unquote, urljoin
 from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
 from utils.parsing.magnet_utils import process_trackers
-from utils.text.constants import STOP_WORDS
 from utils.text.utils import find_year_from_text, find_sizes_from_text
 from utils.parsing.audio_extraction import add_audio_tag_if_needed
 from utils.text.title_builder import create_standardized_title, prepare_release_title
@@ -68,7 +67,33 @@ class ComandScraper(BaseScraper):
     # Extrai links da página inicial
     def _extract_links_from_page(self, doc: BeautifulSoup) -> List[str]:
         links = []
-        # Busca artigos na página
+        # Busca artigos na página - estrutura real: article > h2.entry-title > a
+        for article in doc.select('article'):
+            # Tenta primeiro o seletor correto: h2.entry-title a
+            link_elem = article.select_one('h2.entry-title a')
+            if not link_elem:
+                # Fallback: tenta outros seletores
+                link_elem = article.select_one('header.entry-header h1.entry-title a, h1.entry-title a, header.entry-header a')
+            
+            if link_elem:
+                href = link_elem.get('href')
+                if href:
+                    # Converte URL relativa para absoluta
+                    if not href.startswith('http'):
+                        href = urljoin(self.base_url, href)
+                    links.append(href)
+        
+        return links
+    
+    # Obtém torrents de uma página específica
+    # Obtém torrents de uma página específica
+    def get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
+        return self._default_get_page(page, max_items)
+    
+    # Extrai links dos resultados de busca (usa implementação base de _search_variations)
+    def _extract_search_results(self, doc: BeautifulSoup) -> List[str]:
+        links = []
+        # Busca artigos nos resultados
         for article in doc.select('article.post'):
             link_elem = article.select_one('header.entry-header h1.entry-title a')
             if link_elem:
@@ -83,59 +108,8 @@ class ComandScraper(BaseScraper):
                 if link_elem:
                     href = link_elem.get('href')
                     if href:
-                        # Converte URL relativa para absoluta
-                        absolute_url = urljoin(self.base_url, href)
-                        links.append(absolute_url)
-        
+                        links.append(href)
         return links
-    
-    # Obtém torrents de uma página específica
-    def get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
-        return self._default_get_page(page, max_items)
-    
-    # Busca com variações da query
-    def _search_variations(self, query: str) -> List[str]:
-        links = []
-        variations = [query]
-        
-        # Remove stop words
-        words = [w for w in query.split() if w.lower() not in STOP_WORDS]
-        if words and ' '.join(words) != query:
-            variations.append(' '.join(words))
-        
-        # Primeira palavra (se não for stop word)
-        query_words = query.split()
-        if len(query_words) > 1:
-            first_word = query_words[0].lower()
-            if first_word not in STOP_WORDS:
-                variations.append(query_words[0])
-        
-        for variation in variations:
-            search_url = f"{self.base_url}{self.search_url}{quote(variation)}"
-            doc = self.get_document(search_url, self.base_url)
-            if not doc:
-                continue
-            
-            # Busca artigos nos resultados
-            for article in doc.select('article.post'):
-                link_elem = article.select_one('header.entry-header h1.entry-title a')
-                if link_elem:
-                    href = link_elem.get('href')
-                    if href:
-                        # Converte URL relativa para absoluta
-                        absolute_url = urljoin(self.base_url, href)
-                        links.append(absolute_url)
-            
-            # Se não encontrou com seletor específico, tenta alternativo
-            if not links:
-                for article in doc.select('article'):
-                    link_elem = article.select_one('h1.entry-title a, header.entry-header a')
-                    if link_elem:
-                        href = link_elem.get('href')
-                        if href:
-                            links.append(href)
-        
-        return list(set(links))  # Remove duplicados
     
     # Extrai torrents de uma página
     def _get_torrents_from_page(self, link: str) -> List[Dict]:
@@ -664,7 +638,7 @@ class ComandScraper(BaseScraper):
                 
                 # Resolve automaticamente (magnet direto ou protegido)
                 resolved_magnet = self._resolve_link(href)
-                if resolved_magnet and resolved_magnet.startswith('magnet:') and resolved_magnet not in magnet_links:
+                if resolved_magnet and resolved_magnet.startswith('magnet:'):
                     magnet_links.append(resolved_magnet)
         
         if not magnet_links:

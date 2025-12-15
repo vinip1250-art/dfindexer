@@ -7,12 +7,11 @@ import logging
 from datetime import datetime
 from utils.parsing.date_extraction import parse_date_from_string
 from typing import List, Dict, Optional, Callable
-from urllib.parse import quote, urljoin
+from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
 from utils.parsing.magnet_utils import process_trackers
-from utils.text.constants import STOP_WORDS
 from utils.text.utils import find_year_from_text, find_sizes_from_text
 from utils.parsing.audio_extraction import add_audio_tag_if_needed
 from utils.text.title_builder import create_standardized_title, prepare_release_title
@@ -39,16 +38,14 @@ class BludvScraper(BaseScraper):
     # Extrai links da página inicial
     def _extract_links_from_page(self, doc: BeautifulSoup) -> List[str]:
         links = []
-        seen_links = set()  # Para deduplicar links
         
         for item in doc.select('.post'):
             # Busca o link dentro de div.title > a
             link_elem = item.select_one('div.title > a')
             if link_elem:
                 href = link_elem.get('href')
-                if href and href not in seen_links:
+                if href:
                     links.append(href)
-                    seen_links.add(href)
         
         return links
     
@@ -56,44 +53,16 @@ class BludvScraper(BaseScraper):
     def get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
         return self._default_get_page(page, max_items)
     
-    # Busca com variações da query
-    def _search_variations(self, query: str) -> List[str]:
+    # Extrai links dos resultados de busca (usa implementação base de _search_variations)
+    def _extract_search_results(self, doc: BeautifulSoup) -> List[str]:
         links = []
-        variations = [query]
-        
-        # Remove stop words
-        words = [w for w in query.split() if w.lower() not in STOP_WORDS]
-        if words and ' '.join(words) != query:
-            variations.append(' '.join(words))
-        
-        # Primeira palavra (apenas se não for stop word)
-        query_words = query.split()
-        if len(query_words) > 1:
-            first_word = query_words[0].lower()
-            # Só adiciona primeira palavra se não for stop word
-            if first_word not in STOP_WORDS:
-                variations.append(query_words[0])
-        
-        seen_links = set()  # Para deduplicar links durante a busca
-        
-        for variation in variations:
-            search_url = f"{self.base_url}{self.search_url}{quote(variation)}"
-            doc = self.get_document(search_url, self.base_url)
-            if not doc:
-                continue
-            
-            for item in doc.select('.post'):
-                link_elem = item.select_one('div.title > a')
-                if link_elem:
-                    href = link_elem.get('href')
-                    if href:
-                        # Converte URL relativa para absoluta
-                        absolute_url = urljoin(self.base_url, href)
-                        if absolute_url not in seen_links:
-                            links.append(absolute_url)
-                            seen_links.add(absolute_url)
-        
-        return links  # Já está deduplicado via seen_links
+        for item in doc.select('.post'):
+            link_elem = item.select_one('div.title > a')
+            if link_elem:
+                href = link_elem.get('href')
+                if href:
+                    links.append(href)
+        return links
     
     # Extrai torrents de uma página
     def _get_torrents_from_page(self, link: str) -> List[Dict]:
@@ -441,7 +410,7 @@ class BludvScraper(BaseScraper):
             
             # Resolve automaticamente (magnet direto ou protegido)
             resolved_magnet = self._resolve_link(href)
-            if resolved_magnet and resolved_magnet.startswith('magnet:') and resolved_magnet not in magnet_links:
+            if resolved_magnet and resolved_magnet.startswith('magnet:'):
                 magnet_links.append(resolved_magnet)
         
         if not magnet_links:
@@ -450,20 +419,12 @@ class BludvScraper(BaseScraper):
         # Remove duplicados de tamanhos
         sizes = list(dict.fromkeys(sizes))
         
-        # Set para rastrear info_hashes já processados (deduplicação)
-        seen_info_hashes = set()
-        
         # Processa cada magnet
         # IMPORTANTE: magnet_link já é o magnet resolvido (links protegidos foram resolvidos antes)
         for idx, magnet_link in enumerate(magnet_links):
             try:
                 magnet_data = MagnetParser.parse(magnet_link)
                 info_hash = magnet_data['info_hash']
-                
-                # Deduplica por info_hash - se já vimos este hash, pula
-                if info_hash in seen_info_hashes:
-                    continue
-                seen_info_hashes.add(info_hash)
                 
                 # Busca dados cruzados no Redis por info_hash (fallback principal)
                 cross_data = None

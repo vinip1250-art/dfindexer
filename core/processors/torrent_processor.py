@@ -52,6 +52,7 @@ class TorrentProcessor:
         for torrent in torrents:
             torrent.pop('_metadata', None)
             torrent.pop('_metadata_fetched', None)
+            torrent.pop('_original_order', None)
             
             # Garantia final: se date estiver vazio/None, preenche com data atual
             date_value = torrent.get('date')

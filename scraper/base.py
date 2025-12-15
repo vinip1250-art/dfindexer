@@ -584,7 +584,7 @@ class BaseScraper(ABC):
         try:
             from utils.concurrency.scraper_helpers import (
                 build_page_url, get_effective_max_items, limit_list,
-                process_links_parallel, process_links_sequential
+                process_links_parallel
             )
             page_url = build_page_url(self.base_url, self.page_pattern, page)
             
@@ -594,15 +594,16 @@ class BaseScraper(ABC):
             
             links = self._extract_links_from_page(doc)
             effective_max = get_effective_max_items(max_items)
+            # Limita links ANTES do processamento (EMPTY_QUERY_MAX_LINKS limita quantos links processar)
             links = limit_list(links, effective_max)
             
-            # SEMPRE usa paralelização para melhor performance (mesmo com limite)
-            # A lógica de limite é aplicada durante o processamento
+            # Usa processamento paralelo centralizado (mantém ordem automaticamente)
+            # NÃO passa limite de torrents - o limite já foi aplicado nos links acima
             all_torrents = process_links_parallel(
                 links,
                 self._get_torrents_from_page,
-                effective_max if effective_max > 0 else None,
-                max_workers=Config.SCRAPER_MAX_WORKERS if hasattr(Config, 'SCRAPER_MAX_WORKERS') else 16
+                None,  # Sem limite de torrents - processa todos os links limitados
+                scraper_name=self.SCRAPER_TYPE if hasattr(self, 'SCRAPER_TYPE') else None
             )
             
             enriched = self.enrich_torrents(
@@ -614,6 +615,62 @@ class BaseScraper(ABC):
         finally:
             self._skip_metadata = False
             self._skip_metadata = False
+    
+    def _search_variations(self, query: str) -> List[str]:
+        """
+        Implementação base de busca com variações.
+        Pode ser sobrescrita por scrapers que precisam de lógica específica.
+        
+        Args:
+            query: Termo de busca
+            
+        Returns:
+            Lista de URLs de páginas de torrents encontradas
+        """
+        from urllib.parse import urljoin, quote
+        from utils.text.stop_words import STOP_WORDS
+        
+        links = []
+        variations = [query]
+        
+        # Remove stop words
+        words = [w for w in query.split() if w.lower() not in STOP_WORDS]
+        if words and ' '.join(words) != query:
+            variations.append(' '.join(words))
+        
+        # Primeira palavra (apenas se não for stop word)
+        query_words = query.split()
+        if len(query_words) > 1:
+            first_word = query_words[0].lower()
+            if first_word not in STOP_WORDS:
+                variations.append(query_words[0])
+        
+        for variation in variations:
+            search_url = f"{self.base_url}{self.search_url}{quote(variation)}"
+            doc = self.get_document(search_url, self.base_url)
+            if not doc:
+                continue
+            
+            # Extrai links usando o método específico do scraper
+            page_links = self._extract_search_results(doc)
+            for href in page_links:
+                absolute_url = urljoin(self.base_url, href)
+                links.append(absolute_url)
+        
+        return links
+    
+    def _extract_search_results(self, doc: BeautifulSoup) -> List[str]:
+        """
+        Extrai links dos resultados de busca.
+        Deve ser sobrescrito por cada scraper com seus seletores específicos.
+        
+        Args:
+            doc: BeautifulSoup document da página de resultados
+            
+        Returns:
+            Lista de hrefs (URLs relativas ou absolutas)
+        """
+        return []
     
     def _default_search(self, query: str, filter_func: Optional[Callable[[Dict], bool]] = None) -> List[Dict]:
         from utils.concurrency.scraper_helpers import normalize_query_for_flaresolverr

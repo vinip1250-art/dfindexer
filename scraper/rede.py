@@ -51,7 +51,18 @@ class RedeScraper(BaseScraper):
     def get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
         return self._default_get_page(page, max_items)
     
-    # Busca com variações da query
+    # Extrai links dos resultados de busca
+    def _extract_search_results(self, doc: BeautifulSoup) -> List[str]:
+        links = []
+        for item in doc.select('.capa_lista'):
+            link_elem = item.select_one('a')
+            if link_elem:
+                href = link_elem.get('href')
+                if href:
+                    links.append(href)
+        return links
+    
+    # Busca com variações da query (com paginação específica do site)
     def _search_variations(self, query: str) -> List[str]:
         links = []
         variations = [query]
@@ -479,7 +490,7 @@ class RedeScraper(BaseScraper):
             
             # Resolve automaticamente (magnet direto ou protegido)
             resolved_magnet = self._resolve_link(href)
-            if resolved_magnet and resolved_magnet.startswith('magnet:') and resolved_magnet not in magnet_links:
+            if resolved_magnet and resolved_magnet.startswith('magnet:'):
                 magnet_links.append(resolved_magnet)
         
         if not magnet_links:

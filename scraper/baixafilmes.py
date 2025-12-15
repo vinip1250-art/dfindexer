@@ -35,7 +35,18 @@ class BaixafilmesScraper(BaseScraper):
         self.search_url = "?s="
         self.page_pattern = "page/{}/"
     
-    # Busca com variações da query
+    # Extrai links dos resultados de busca
+    def _extract_search_results(self, doc: BeautifulSoup) -> List[str]:
+        links = []
+        for item in doc.select('.post'):
+            link_elem = item.select_one('div.title > a')
+            if link_elem:
+                href = link_elem.get('href')
+                if href:
+                    links.append(href)
+        return links
+    
+    # Busca com variações da query (com lógica específica para títulos japoneses)
     def _search_variations(self, query: str) -> List[str]:
         links = []
         variations = [query]
@@ -130,61 +141,9 @@ class BaixafilmesScraper(BaseScraper):
         
         return links
     
-    # Obtém torrents de uma página específica (usa helper padrão com extração customizada)
+    # Obtém torrents de uma página específica
     def get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
-        # Prepara flags de teste/metadata/trackers (centralizado no BaseScraper)
-        is_using_default_limit, skip_metadata, skip_trackers = self._prepare_page_flags(max_items)
-        
-        try:
-            # Constrói URL da página usando função utilitária
-            from utils.concurrency.scraper_helpers import (
-                build_page_url, get_effective_max_items, limit_list,
-                process_links_parallel, process_links_sequential
-            )
-            page_url = build_page_url(self.base_url, self.page_pattern, page)
-            
-            doc = self.get_document(page_url, self.base_url)
-            if not doc:
-                return []
-            
-            # Extrai links usando método específico do scraper
-            links = self._extract_links_from_page(doc)
-            
-            # Obtém limite efetivo usando função utilitária
-            effective_max = get_effective_max_items(max_items)
-            
-            # Log para info: mostra quantos links foram encontrados e qual o limite
-            _log_ctx.log_links_found(len(links), effective_max)
-            
-            # Limita links se houver limite (EMPTY_QUERY_MAX_LINKS limita quantos links processar)
-            links = limit_list(links, effective_max)
-            
-            # Quando há limite configurado, processa sequencialmente para manter ordem original
-            # Caso contrário, processa em paralelo para melhor performance
-            if effective_max > 0:
-                all_torrents = process_links_sequential(
-                    links,
-                    self._get_torrents_from_page,
-                    None  # Sem limite no processamento - já limitamos os links acima
-                )
-            else:
-                all_torrents = process_links_parallel(
-                    links,
-                    self._get_torrents_from_page,
-                    None  # Sem limite no processamento - já limitamos os links acima
-                )
-            
-            # Enriquece torrents (usa flags preparadas pelo BaseScraper)
-            enriched = self.enrich_torrents(
-                all_torrents,
-                skip_metadata=skip_metadata,
-                skip_trackers=skip_trackers
-            )
-            # Retorna todos os magnets encontrados (sem limite nos resultados finais)
-            return enriched
-        finally:
-            self._skip_metadata = False
-            self._is_test = False
+        return self._default_get_page(page, max_items)
     
     
     # Extrai torrents de uma página

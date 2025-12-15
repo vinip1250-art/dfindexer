@@ -7,12 +7,11 @@ import logging
 from datetime import datetime
 from utils.parsing.date_extraction import parse_date_from_string
 from typing import List, Dict, Optional, Callable
-from urllib.parse import quote, urljoin
+from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
 from utils.parsing.magnet_utils import process_trackers
-from utils.text.constants import STOP_WORDS
 from utils.text.utils import find_year_from_text, find_sizes_from_text
 from utils.parsing.audio_extraction import detect_audio_from_html, add_audio_tag_if_needed
 from utils.text.title_builder import create_standardized_title, prepare_release_title
@@ -65,122 +64,11 @@ class NerdScraper(BaseScraper):
                             if href:
                                 # Converte URL relativa para absoluta
                                 absolute_url = urljoin(self.base_url, href)
-                                if absolute_url not in links:
-                                    links.append(absolute_url)
+                                links.append(absolute_url)
         
         # Fallback: Se não encontrou a seção específica, usa seletores genéricos
         if not links:
             _log_ctx.info("Seção 'Últimos Adicionados!' não encontrada - usando fallback genérico")
-            
-            # Tenta primeiro os seletores específicos do site (estrutura da página inicial)
-            for item in doc.select('.listagem .item a'):
-                href = item.get('href')
-                if href:
-                    absolute_url = urljoin(self.base_url, href)
-                    if absolute_url not in links:
-                        links.append(absolute_url)
-            
-            # Se não encontrou com seletor específico, tenta alternativos
-            if not links:
-                for item in doc.select('div.listagem div.item a'):
-                    href = item.get('href')
-                    if href:
-                        absolute_url = urljoin(self.base_url, href)
-                        if absolute_url not in links:
-                            links.append(absolute_url)
-            
-            # Fallback: tenta seletores WordPress comuns
-            if not links:
-                for article in doc.select('article.post'):
-                    link_elem = article.select_one('h2.entry-title a, h1.entry-title a, header.entry-header a')
-                    if link_elem:
-                        href = link_elem.get('href')
-                        if href:
-                            absolute_url = urljoin(self.base_url, href)
-                            if absolute_url not in links:
-                                links.append(absolute_url)
-        
-        return links
-    
-    # Obtém torrents de uma página específica (usa helper padrão com extração customizada)
-    def get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
-        # Prepara flags de teste/metadata/trackers (centralizado no BaseScraper)
-        is_using_default_limit, skip_metadata, skip_trackers = self._prepare_page_flags(max_items)
-        
-        try:
-            # Constrói URL da página usando função utilitária
-            from utils.concurrency.scraper_helpers import (
-                build_page_url, get_effective_max_items, limit_list,
-                process_links_parallel, process_links_sequential
-            )
-            page_url = build_page_url(self.base_url, self.page_pattern, page)
-            
-            doc = self.get_document(page_url, self.base_url)
-            if not doc:
-                return []
-            
-            # Extrai links usando método específico do scraper (retorna lista única)
-            links = self._extract_links_from_page(doc)
-            
-            # Obtém limite efetivo usando função utilitária
-            effective_max = get_effective_max_items(max_items)
-            
-            # Quando há limite configurado, limita a lista de links
-            if effective_max > 0:
-                links = limit_list(links, effective_max)
-                _log_ctx.info(f"Limite configurado: {effective_max} - Coletando {len(links)} itens de 'Últimos Adicionados!'")
-            else:
-                _log_ctx.info(f"Coletando {len(links)} itens de 'Últimos Adicionados!' (sem limite)")
-            
-            # Quando há limite configurado, processa sequencialmente para manter ordem original
-            # Caso contrário, processa em paralelo para melhor performance
-            if effective_max > 0:
-                all_torrents = process_links_sequential(
-                    links,
-                    self._get_torrents_from_page,
-                    None  # Sem limite no processamento - já limitamos os links acima
-                )
-            else:
-                all_torrents = process_links_parallel(
-                    links,
-                    self._get_torrents_from_page,
-                    None  # Sem limite no processamento - já limitamos os links acima
-                )
-            
-            # Enriquece torrents (usa flags preparadas pelo BaseScraper)
-            enriched = self.enrich_torrents(
-                all_torrents,
-                skip_metadata=skip_metadata,
-                skip_trackers=skip_trackers
-            )
-            # Retorna todos os magnets encontrados (sem limite nos resultados finais)
-            return enriched
-        finally:
-            self._skip_metadata = False
-            self._is_test = False
-    
-    # Busca com variações da query
-    def _search_variations(self, query: str) -> List[str]:
-        links = []
-        variations = [query]
-        
-        # Remove stop words
-        words = [w for w in query.split() if w.lower() not in STOP_WORDS]
-        if words and ' '.join(words) != query:
-            variations.append(' '.join(words))
-        
-        # Primeira palavra (se não for stop word)
-        query_words = query.split()
-        if len(query_words) > 1:
-            first_word = query_words[0].lower()
-            if first_word not in STOP_WORDS:
-                variations.append(query_words[0])
-        
-        for variation in variations:
-            search_url = f"{self.base_url}{self.search_url}{quote(variation)}"
-            doc = self.get_document(search_url, self.base_url)
-            if not doc:
-                continue
             
             # Tenta primeiro os seletores específicos do site (estrutura da página inicial)
             for item in doc.select('.listagem .item a'):
@@ -207,7 +95,37 @@ class NerdScraper(BaseScraper):
                             absolute_url = urljoin(self.base_url, href)
                             links.append(absolute_url)
         
-        return list(set(links))  # Remove duplicados
+        return links
+    
+    # Obtém torrents de uma página específica
+    def get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
+        return self._default_get_page(page, max_items)
+    
+    # Extrai links dos resultados de busca (usa implementação base de _search_variations)
+    def _extract_search_results(self, doc: BeautifulSoup) -> List[str]:
+        links = []
+        # Tenta primeiro os seletores específicos do site (estrutura da página inicial)
+        for item in doc.select('.listagem .item a'):
+            href = item.get('href')
+            if href:
+                links.append(href)
+        
+        # Se não encontrou com seletor específico, tenta alternativos
+        if not links:
+            for item in doc.select('div.listagem div.item a'):
+                href = item.get('href')
+                if href:
+                    links.append(href)
+        
+        # Fallback: tenta seletores WordPress comuns
+        if not links:
+            for article in doc.select('article.post'):
+                link_elem = article.select_one('h2.entry-title a, h1.entry-title a, header.entry-header a')
+                if link_elem:
+                    href = link_elem.get('href')
+                    if href:
+                        links.append(href)
+        return links
     
     # Extrai torrents de uma página
     def _get_torrents_from_page(self, link: str) -> List[Dict]:
@@ -569,7 +487,7 @@ class NerdScraper(BaseScraper):
             
             # Resolve automaticamente (magnet direto ou protegido)
             resolved_magnet = self._resolve_link(href)
-            if resolved_magnet and resolved_magnet.startswith('magnet:') and resolved_magnet not in magnet_links:
+            if resolved_magnet and resolved_magnet.startswith('magnet:'):
                 magnet_links.append(resolved_magnet)
         
         if not magnet_links:

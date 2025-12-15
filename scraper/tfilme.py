@@ -7,12 +7,11 @@ import logging
 from datetime import datetime
 from utils.parsing.date_extraction import parse_date_from_string
 from typing import List, Dict, Optional, Callable, Tuple
-from urllib.parse import quote, unquote, urljoin
+from urllib.parse import unquote, urljoin
 from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
 from utils.parsing.magnet_utils import process_trackers
-from utils.text.constants import STOP_WORDS
 from utils.text.utils import find_year_from_text, find_sizes_from_text
 from utils.parsing.audio_extraction import add_audio_tag_if_needed
 from utils.text.title_builder import create_standardized_title, prepare_release_title
@@ -112,7 +111,7 @@ class TfilmeScraper(BaseScraper):
             # Constrói URL da página usando função utilitária
             from utils.concurrency.scraper_helpers import (
                 build_page_url, get_effective_max_items, limit_list,
-                process_links_parallel, process_links_sequential
+                process_links_parallel
             )
             page_url = build_page_url(self.base_url, self.page_pattern, page)
             
@@ -142,20 +141,14 @@ class TfilmeScraper(BaseScraper):
                 # Sem limite, combina todos os links
                 links = filmes_links + series_links
             
-            # Quando há limite configurado, processa sequencialmente para manter ordem original
-            # Caso contrário, processa em paralelo para melhor performance
-            if effective_max > 0:
-                all_torrents = process_links_sequential(
-                    links,
-                    self._get_torrents_from_page,
-                    None  # Sem limite no processamento - já limitamos os links acima
-                )
-            else:
-                all_torrents = process_links_parallel(
-                    links,
-                    self._get_torrents_from_page,
-                    None  # Sem limite no processamento - já limitamos os links acima
-                )
+            # Usa processamento paralelo centralizado (mantém ordem original automaticamente)
+            # NÃO passa limite de torrents - o limite já foi aplicado nos links acima
+            all_torrents = process_links_parallel(
+                links,
+                self._get_torrents_from_page,
+                None,  # Sem limite de torrents - processa todos os links limitados
+                scraper_name=self.SCRAPER_TYPE if hasattr(self, 'SCRAPER_TYPE') else None
+            )
             
             # Enriquece torrents (usa flags preparadas pelo BaseScraper)
             enriched = self.enrich_torrents(
@@ -169,37 +162,16 @@ class TfilmeScraper(BaseScraper):
             self._skip_metadata = False
             self._is_test = False
     
-    # Busca com variações da query
-    def _search_variations(self, query: str) -> List[str]:
+    # Extrai links dos resultados de busca (usa implementação base de _search_variations)
+    def _extract_search_results(self, doc: BeautifulSoup) -> List[str]:
         links = []
-        variations = [query]
-        
-        # Remove stop words
-        words = [w for w in query.split() if w.lower() not in STOP_WORDS]
-        if words and ' '.join(words) != query:
-            variations.append(' '.join(words))
-        
-        # Primeira palavra (se não for stop word)
-        query_words = query.split()
-        if len(query_words) > 1:
-            first_word = query_words[0].lower()
-            if first_word not in STOP_WORDS:
-                variations.append(query_words[0])
-        
-        for variation in variations:
-            search_url = f"{self.base_url}{self.search_url}{quote(variation)}"
-            doc = self.get_document(search_url, self.base_url)
-            if not doc:
-                continue
-            
-            for item in doc.select('.post'):
-                link_elem = item.select_one('div.title > a')
-                if link_elem:
-                    href = link_elem.get('href')
-                    if href:
-                        links.append(href)
-        
-        return list(set(links))
+        for item in doc.select('.post'):
+            link_elem = item.select_one('div.title > a')
+            if link_elem:
+                href = link_elem.get('href')
+                if href:
+                    links.append(href)
+        return links
     
     # Extrai torrents de uma página
     def _get_torrents_from_page(self, link: str) -> List[Dict]:
@@ -434,7 +406,7 @@ class TfilmeScraper(BaseScraper):
             
             # Resolve automaticamente (magnet direto ou protegido)
             resolved_magnet = self._resolve_link(href)
-            if resolved_magnet and resolved_magnet.startswith('magnet:') and resolved_magnet not in magnet_links:
+            if resolved_magnet and resolved_magnet.startswith('magnet:'):
                 magnet_links.append(resolved_magnet)
         
         if not magnet_links:

@@ -7,12 +7,11 @@ import logging
 from datetime import datetime
 from utils.parsing.date_extraction import parse_date_from_string
 from typing import List, Dict, Optional, Callable
-from urllib.parse import quote, urljoin
+from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
 from magnet.parser import MagnetParser
 from utils.parsing.magnet_utils import process_trackers
-from utils.text.constants import STOP_WORDS
 from utils.text.cleaning import clean_title, remove_accents
 from utils.text.utils import find_year_from_text, find_sizes_from_text
 from utils.text.title_builder import create_standardized_title, prepare_release_title
@@ -40,71 +39,102 @@ class StarckScraper(BaseScraper):
     # Extrai links da página inicial
     def _extract_links_from_page(self, doc: BeautifulSoup) -> List[str]:
         links = []
-        for item in doc.select('.item'):
-            # Tenta primeiro o link com class="title" (mais específico)
-            link_elem = item.select_one('div.sub-item > h3 > a.title')
-            if not link_elem:
-                # Fallback: primeiro link dentro de sub-item
-                link_elem = item.select_one('div.sub-item > a')
-            if not link_elem:
-                # Fallback alternativo: qualquer link com "catalog" dentro de sub-item
-                all_links = item.select('div.sub-item a[href*="catalog"]')
-                if all_links:
-                    link_elem = all_links[0]
+        seen_hrefs = set()  # Para evitar duplicatas
+        
+        # Busca especificamente dentro de div.post-catalog (ou div.home.post-catalog)
+        catalog_div = doc.select_one('div.post-catalog, div.home.post-catalog')
+        if not catalog_div:
+            # Fallback: busca em todo o documento
+            catalog_div = doc
+        
+        # Itera sobre cada item dentro do catalog na ordem que aparecem
+        items = catalog_div.select('.item')
+        logger.debug(f"[Starck] Encontrados {len(items)} itens na página")
+        
+        for item in items:
+            # Busca o primeiro link <a> diretamente dentro de div.sub-item que tem atributo 'title'
+            # (ignora o link dentro de h3 que tem apenas 'tabindex')
+            sub_item = item.select_one('div.sub-item')
+            if not sub_item:
+                continue
+            
+            # Pega o primeiro link <a> diretamente filho de div.sub-item (não dentro de h3)
+            # Este link tem o atributo 'title'
+            # Usa find_all e pega o primeiro que tem title (não o que está dentro de h3)
+            all_links = sub_item.find_all('a', href=lambda h: h and 'catalog' in h)
+            link_elem = None
+            
+            for link in all_links:
+                # Verifica se é o link direto (não está dentro de h3)
+                # O link correto é o primeiro que tem title e não está dentro de h3
+                parent_h3 = link.find_parent('h3')
+                title_attr = link.get('title')
+                
+                if not parent_h3 and title_attr and title_attr.strip():
+                    link_elem = link
+                    break
             
             if link_elem:
                 href = link_elem.get('href')
-                if href:
-                    links.append(href)
+                title_attr = link_elem.get('title')
+                
+                # Verifica se tem title válido
+                if href and title_attr and title_attr.strip():
+                    # Normaliza href para absoluto ANTES de verificar duplicatas
+                    if not href.startswith('http'):
+                        href = urljoin(self.base_url, href)
+                    
+                    # Verifica duplicatas e adiciona
+                    if href not in seen_hrefs:
+                        links.append(href)
+                        seen_hrefs.add(href)
         
+        logger.debug(f"[Starck] Extraídos {len(links)} links únicos")
         return links
     
     # Obtém torrents de uma página específica
     def get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
         return self._default_get_page(page, max_items)
     
-    # Busca com variações da query
-    def _search_variations(self, query: str) -> List[str]:
+    # Extrai links dos resultados de busca (usa implementação base de _search_variations)
+    def _extract_search_results(self, doc: BeautifulSoup) -> List[str]:
         links = []
-        variations = [query]
+        seen_hrefs = set()  # Para evitar duplicatas
         
-        # Remove stop words
-        words = [w for w in query.split() if w.lower() not in STOP_WORDS]
-        if words and ' '.join(words) != query:
-            variations.append(' '.join(words))
+        # Busca especificamente dentro de div.post-catalog (ou div.home.post-catalog)
+        catalog_div = doc.select_one('div.post-catalog, div.home.post-catalog')
+        if not catalog_div:
+            # Fallback: busca em todo o documento
+            catalog_div = doc
         
-        # Primeira palavra (apenas se não for stop word)
-        query_words = query.split()
-        if len(query_words) > 1:
-            first_word = query_words[0].lower()
-            # Só adiciona primeira palavra se não for stop word
-            if first_word not in STOP_WORDS:
-                variations.append(query_words[0])
-        
-        for variation in variations:
-            search_url = f"{self.base_url}{self.search_url}{quote(variation)}"
-            doc = self.get_document(search_url, self.base_url)
-            if not doc:
+        # Itera sobre cada item dentro do catalog
+        for item in catalog_div.select('.item'):
+            # Busca o primeiro link <a> diretamente dentro de div.sub-item que tem atributo 'title'
+            # (ignora o link dentro de h3 que tem apenas 'tabindex')
+            sub_item = item.select_one('div.sub-item')
+            if not sub_item:
                 continue
             
-            for item in doc.select('.item'):
-                # Tenta primeiro o link com class="title" (mais específico)
-                link_elem = item.select_one('div.sub-item > h3 > a.title')
-                if not link_elem:
-                    # Fallback: primeiro link dentro de sub-item
-                    link_elem = item.select_one('div.sub-item > a')
-                if not link_elem:
-                    # Fallback alternativo: qualquer link com "catalog" dentro de sub-item
-                    all_links = item.select('div.sub-item a[href*="catalog"]')
-                    if all_links:
-                        link_elem = all_links[0]
+            # Pega o primeiro link <a> diretamente filho de div.sub-item (não dentro de h3)
+            # Este link tem o atributo 'title'
+            link_elem = sub_item.find('a', href=lambda h: h and 'catalog' in h, title=lambda t: t and t.strip())
+            
+            if link_elem:
+                href = link_elem.get('href')
+                title_attr = link_elem.get('title')
                 
-                if link_elem:
-                    href = link_elem.get('href')
-                    if href:
+                # Verifica se tem title válido
+                if href and title_attr and title_attr.strip():
+                    # Normaliza href para absoluto ANTES de verificar duplicatas
+                    if not href.startswith('http'):
+                        href = urljoin(self.base_url, href)
+                    
+                    # Verifica duplicatas e adiciona
+                    if href not in seen_hrefs:
                         links.append(href)
+                        seen_hrefs.add(href)
         
-        return list(set(links))  # Remove duplicados
+        return links
     
     # Extrai torrents de uma página
     def _get_torrents_from_page(self, link: str) -> List[Dict]:
@@ -220,7 +250,7 @@ class StarckScraper(BaseScraper):
             
             # Resolve automaticamente (magnet direto ou protegido)
             resolved_magnet = self._resolve_link(href)
-            if resolved_magnet and resolved_magnet.startswith('magnet:') and resolved_magnet not in magnet_links:
+            if resolved_magnet and resolved_magnet.startswith('magnet:'):
                 magnet_links.append(resolved_magnet)
         
         if not magnet_links:

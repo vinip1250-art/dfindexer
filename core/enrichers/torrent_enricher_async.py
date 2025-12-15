@@ -52,7 +52,8 @@ class TorrentEnricherAsync:
         if not torrents:
             return torrents
         
-        torrents = self._remove_duplicates(torrents)
+        # Removida deduplicação - todos os magnets devem ser mostrados
+        # torrents = self._remove_duplicates(torrents)
         
         if not skip_metadata:
             await self._ensure_titles_complete(torrents)

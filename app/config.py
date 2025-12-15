@@ -50,7 +50,7 @@ class Config:
     # FlareSolverr
     FLARESOLVERR_ADDRESS: Optional[str] = os.getenv('FLARESOLVERR_ADDRESS', None)  # Padrão: None (desabilitado)
     
-    EMPTY_QUERY_MAX_LINKS: int = int(os.getenv('EMPTY_QUERY_MAX_LINKS', '15'))
+    EMPTY_QUERY_MAX_LINKS: int = int(os.getenv('EMPTY_QUERY_MAX_LINKS', '16'))
     
     # Concorrência (valores fixos - não configuráveis via ENV)
     TRACKER_MAX_WORKERS: int = 30  # Workers globais para trackers
