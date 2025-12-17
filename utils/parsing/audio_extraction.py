@@ -11,12 +11,15 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# REGRAS ESPECÍFICAS POR SCRAPER - Extração de Áudio/Idioma e Legenda
+# REGRAS ESPECÍFICAS POR SCRAPER - Extração de Áudio/Idioma
+# NOTA: Extração de Legenda foi movida para utils/parsing/legend_extraction.py
 # ============================================================================
 
 def _extract_audio_legenda_bludv(doc: BeautifulSoup, content_div: Optional[BeautifulSoup] = None) -> Tuple[str, str]:
     """
     Bludv: Extrai "Áudio" e "Legenda" do HTML.
+    DEPRECATED: Legenda foi movida para utils/parsing/legend_extraction.py
+    Mantida apenas para compatibilidade.
     """
     audio_text = ''
     legenda = ''
@@ -84,6 +87,8 @@ def _extract_audio_legenda_bludv(doc: BeautifulSoup, content_div: Optional[Beaut
 def _extract_audio_legenda_rede(doc: BeautifulSoup, article: Optional[BeautifulSoup] = None) -> Tuple[str, str]:
     """
     Rede: Extrai "Idioma" e "Legenda" de div#informacoes.
+    DEPRECATED: Legenda foi movida para utils/parsing/legend_extraction.py
+    Mantida apenas para compatibilidade.
     """
     idioma = ''
     legenda = ''
@@ -144,6 +149,8 @@ def _extract_audio_legenda_baixafilmes(doc: BeautifulSoup, entry_meta_list: Opti
     """
     Limon Torrents: Extrai "Idioma" e "Legenda" de div.entry-meta.
     Nome da função mantido por compatibilidade histórica (anteriormente usado por baixafilmes).
+    DEPRECATED: Legenda foi movida para utils/parsing/legend_extraction.py
+    Mantida apenas para compatibilidade.
     """
     idioma = ''
     legenda = ''
@@ -197,6 +204,8 @@ def _extract_audio_legenda_baixafilmes(doc: BeautifulSoup, entry_meta_list: Opti
 def _extract_audio_legenda_comand(doc: BeautifulSoup, content_div: Optional[BeautifulSoup] = None) -> Tuple[str, str]:
     """
     Comando: Extrai "Áudio" e "Legenda" do HTML (similar ao bludv mas com stop_words diferentes).
+    DEPRECATED: Legenda foi movida para utils/parsing/legend_extraction.py
+    Mantida apenas para compatibilidade.
     """
     audio_text = ''
     legenda = ''
@@ -275,6 +284,8 @@ SCRAPER_AUDIO_LEGENDA_EXTRACTORS: Dict[str, Callable] = {
 def extract_audio_legenda_from_page(doc: BeautifulSoup, scraper_type: Optional[str] = None, **kwargs) -> Tuple[str, str]:
     """
     Extrai informações de áudio/idioma e legenda do HTML.
+    DEPRECATED: Legenda foi movida para utils/parsing/legend_extraction.py
+    Use extract_legenda_from_page() para legenda e esta função apenas para compatibilidade.
     
     Args:
         doc: Documento BeautifulSoup
@@ -307,55 +318,109 @@ def extract_audio_legenda_from_page(doc: BeautifulSoup, scraper_type: Optional[s
     return '', ''
 
 
-def determine_audio_info(idioma: str, legenda: str) -> Optional[str]:
+def determine_audio_info(idioma: str, legenda: str = '', release_title_magnet: Optional[str] = None, info_hash: Optional[str] = None, skip_metadata: bool = False) -> Optional[str]:
     """
-    Determina audio_info baseado em idioma/áudio e legenda extraídos.
+    Determina audio_info baseado em idioma/áudio extraído com fallbacks.
+    NOTA: Parâmetro legenda mantido para compatibilidade, mas não é mais usado.
+    Legenda é tratada separadamente em utils/parsing/legend_extraction.py
+    
+    Lógica de Audio:
+    1. FONTE PRINCIPAL: HTML (audio_info: 'Coletar o que está no campo')
+    2. FALLBACK 1: Magnet (dual/dublado/nacional/portugues) → marca Português, Inglês
+    3. FALLBACK 2: Metadata
+    4. FALLBACK 3: Cross Data
     
     Args:
-        idioma: Texto extraído do campo "Idioma" ou "Áudio"
-        legenda: Texto extraído do campo "Legenda"
+        idioma: Texto extraído do campo "Idioma" ou "Áudio" (HTML)
+        legenda: DEPRECATED - não é mais usado, mantido apenas para compatibilidade
+        release_title_magnet: Nome do magnet link para fallback
+        info_hash: Hash do torrent para fallbacks (metadata e cross_data)
+        skip_metadata: Se True, pula busca em metadata
     
     Returns:
-        'dual', 'português', 'legendado', ou None
+        'dual', 'português', 'japonês', ou None
     """
-    if not idioma and not legenda:
-        return None
+    # ============================================================================
+    # FONTE PRINCIPAL: HTML (audio_info: 'Coletar o que está no campo')
+    # ============================================================================
     
-    idioma_lower = idioma.lower() if idioma else ''
-    legenda_lower = legenda.lower() if legenda else ''
+    if idioma:
+        idioma_lower = idioma.lower()
+        
+        # Verifica se tem português no idioma/áudio
+        has_portugues_audio = (
+            'português' in idioma_lower or 'portugues' in idioma_lower or 
+            'pt-br' in idioma_lower or 'ptbr' in idioma_lower or 
+            'pt br' in idioma_lower
+        )
+        
+        # Verifica se tem Inglês no idioma/áudio
+        has_ingles_audio = 'inglês' in idioma_lower or 'ingles' in idioma_lower or 'english' in idioma_lower or 'en' in idioma_lower
+        
+        # Verifica se tem Japonês no idioma/áudio
+        has_japones_audio = 'japonês' in idioma_lower or 'japones' in idioma_lower or 'japanese' in idioma_lower or 'jap' in idioma_lower
+        
+        # Lógica de determinação:
+        # 1. Se tem português E inglês no idioma/áudio → DUAL
+        if has_portugues_audio and has_ingles_audio:
+            return 'dual'
+        
+        # 2. Se tem apenas português no idioma/áudio → português
+        if has_portugues_audio:
+            return 'português'
+        
+        # 3. Se tem japonês no idioma/áudio → japonês
+        if has_japones_audio:
+            return 'japonês'
     
-    # Verifica se tem português no idioma/áudio
-    has_portugues_audio = (
-        'português' in idioma_lower or 'portugues' in idioma_lower or 
-        'pt-br' in idioma_lower or 'ptbr' in idioma_lower or 
-        'pt br' in idioma_lower
-    )
+    # ============================================================================
+    # FALLBACK 1: Magnet (dual/dublado/nacional/portugues) → marca Português, Inglês
+    # ============================================================================
     
-    # Verifica se tem português na legenda
-    has_portugues_legenda = (
-        'português' in legenda_lower or 'portugues' in legenda_lower or 
-        'pt-br' in legenda_lower or 'ptbr' in legenda_lower or 
-        'pt br' in legenda_lower
-    )
+    if release_title_magnet:
+        release_lower = release_title_magnet.lower()
+        if 'dual' in release_lower or 'dublado' in release_lower or 'nacional' in release_lower or 'portugues' in release_lower or 'português' in release_lower:
+            # Se tem dual, marca Português, Inglês (dual)
+            if 'dual' in release_lower:
+                return 'dual'
+            # Se tem dublado/nacional/portugues, marca apenas português
+            return 'português'
     
-    # Verifica se tem Inglês no idioma/áudio
-    has_ingles_audio = 'inglês' in idioma_lower or 'ingles' in idioma_lower or 'english' in idioma_lower or 'en' in idioma_lower
+    # ============================================================================
+    # FALLBACK 2: Metadata
+    # ============================================================================
     
-    # Verifica se tem Inglês em qualquer lugar
-    has_ingles = has_ingles_audio or 'inglês' in legenda_lower or 'ingles' in legenda_lower or 'english' in legenda_lower
+    if info_hash and not skip_metadata:
+        try:
+            from magnet.metadata import fetch_metadata_from_itorrents
+            metadata = fetch_metadata_from_itorrents(info_hash)
+            if metadata and metadata.get('name'):
+                metadata_name = metadata.get('name', '').lower()
+                if 'dual' in metadata_name or 'dublado' in metadata_name or 'nacional' in metadata_name or 'portugues' in metadata_name or 'português' in metadata_name:
+                    if 'dual' in metadata_name:
+                        return 'dual'
+                    return 'português'
+        except Exception:
+            pass
     
-    # Lógica de determinação:
-    # 1. Se tem português E inglês no idioma/áudio → DUAL
-    if has_portugues_audio and has_ingles_audio:
-        return 'dual'
+    # ============================================================================
+    # FALLBACK 3: Cross Data
+    # ============================================================================
     
-    # 2. Se tem apenas português no idioma/áudio → português
-    if has_portugues_audio:
-        return 'português'
-    
-    # 3. Se tem legenda com português OU tem Inglês → legendado
-    if has_portugues_legenda or has_ingles:
-        return 'legendado'
+    if info_hash and not skip_metadata:
+        try:
+            from utils.text.cross_data import get_cross_data_from_redis
+            cross_data = get_cross_data_from_redis(info_hash)
+            if cross_data and cross_data.get('release_title_magnet'):
+                cross_release = cross_data.get('release_title_magnet')
+                if cross_release and cross_release != 'N/A':
+                    cross_release_lower = str(cross_release).lower()
+                    if 'dual' in cross_release_lower or 'dublado' in cross_release_lower or 'nacional' in cross_release_lower or 'portugues' in cross_release_lower or 'português' in cross_release_lower:
+                        if 'dual' in cross_release_lower:
+                            return 'dual'
+                        return 'português'
+        except Exception:
+            pass
     
     return None
 
@@ -415,42 +480,61 @@ def detect_audio_from_html(html_content: str) -> Optional[str]:
 
 def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Optional[str] = None, skip_metadata: bool = False, audio_info_from_html: Optional[str] = None, audio_html_content: Optional[str] = None) -> str:
     """
-    Acrescenta tags de idioma [Brazilian], [Eng], [Jap] e/ou [Leg] quando detectadas no release, metadata ou HTML.
+    Acrescenta tags de idioma [Brazilian], [Eng], [Jap] quando detectadas.
+    NOTA: Tag [Leg] foi removida conforme especificação.
+    
+    Lógica de detecção de áudio:
+    1. HTML (audio_info: 'Coletar o que está no campo') - usa o valor diretamente
+    2. LINK do html contém DUAL → marca Português, Inglês
+    3. Nome Magnet (dual/dublado/nacional/portugues) → marca Português, Inglês
+    4. Metadata
+    5. Cross Data
     """
     # Remove apenas as tags que queremos usar antes de processar
-    title = title.replace('[Brazilian]', '').replace('[Eng]', '').replace('[Jap]', '').replace('[Leg]', '')
+    title = title.replace('[Brazilian]', '').replace('[Eng]', '').replace('[Jap]', '')
     title = re.sub(r'\s+', ' ', title).strip()
     
     # Verifica se já tem as tags corretas no título
     has_brazilian = '[Brazilian]' in title
     has_eng = '[Eng]' in title
     has_jap = '[Jap]' in title
-    has_leg = '[Leg]' in title
     
-    # Tenta detectar áudio no release_title_magnet primeiro
+    # Flags de detecção
     has_brazilian_audio = False
-    has_legendado = False
-    has_dual = False
+    has_eng_audio = False
     has_japones_audio = False
     
-    if release_title_magnet:
-        release_lower = release_title_magnet.lower()
-        # Detecta DUAL (português + inglês)
-        if 'dual' in release_lower:
-            has_dual = True
-            has_brazilian_audio = True  # DUAL também indica português
-        # Detecta português (DUBLADO, NACIONAL, PORTUGUES, PORTUGUÊS)
-        elif 'dublado' in release_lower or 'nacional' in release_lower or 'portugues' in release_lower or 'português' in release_lower:
-            has_brazilian_audio = True
-        # Detecta japonês (JAPONÊS, JAPONES, JAPANESE, JAP)
-        if 'japonês' in release_lower or 'japones' in release_lower or 'japanese' in release_lower or re.search(r'\bjap\b', release_lower):
-            has_japones_audio = True
-        # Detecta legendado (LEGENDADO, LEGENDA, LEG)
-        if 'legendado' in release_lower or 'legenda' in release_lower or re.search(r'\bleg\b', release_lower):
-            has_legendado = True
+    # ============================================================================
+    # TAG [Brazilian]
+    # FONTE PRINCIPAL: HTML (audio_info: 'português')
+    # ============================================================================
     
-    # Se não encontrou no release_title_magnet e temos info_hash, tenta buscar no cross_data primeiro (evita consulta desnecessária ao metadata)
-    if info_hash and not skip_metadata:
+    if audio_info_from_html:
+        audio_info_str = str(audio_info_from_html).lower()
+        # Para [Brazilian]: detecta apenas 'português' explicitamente
+        if 'português' in audio_info_str or 'portugues' in audio_info_str:
+            has_brazilian_audio = True
+    
+    # FALLBACK 1: Magnet (dual/dublado/nacional/portugues)
+    if release_title_magnet and not has_brazilian_audio:
+        release_lower = release_title_magnet.lower()
+        if 'dual' in release_lower or 'dublado' in release_lower or 'nacional' in release_lower or 'portugues' in release_lower or 'português' in release_lower:
+            has_brazilian_audio = True
+    
+    # FALLBACK 2: Metadata
+    if info_hash and not skip_metadata and not has_brazilian_audio:
+        try:
+            from magnet.metadata import fetch_metadata_from_itorrents
+            metadata = fetch_metadata_from_itorrents(info_hash)
+            if metadata and metadata.get('name'):
+                metadata_name = metadata.get('name', '').lower()
+                if 'dual' in metadata_name or 'dublado' in metadata_name or 'nacional' in metadata_name or 'portugues' in metadata_name or 'português' in metadata_name:
+                    has_brazilian_audio = True
+        except Exception:
+            pass
+    
+    # FALLBACK 3: Cross Data
+    if info_hash and not skip_metadata and not has_brazilian_audio:
         try:
             from utils.text.cross_data import get_cross_data_from_redis
             cross_data = get_cross_data_from_redis(info_hash)
@@ -458,118 +542,113 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
                 cross_release = cross_data.get('release_title_magnet')
                 if cross_release and cross_release != 'N/A':
                     cross_release_lower = str(cross_release).lower()
-                    # Detecta DUAL no cross_data
-                    if not has_dual and 'dual' in cross_release_lower:
-                        has_dual = True
-                        has_brazilian_audio = True  # DUAL também indica português
-                    # Detecta português no cross_data (DUBLADO, NACIONAL, PORTUGUES, PORTUGUÊS)
-                    elif not has_brazilian_audio and ('dublado' in cross_release_lower or 'nacional' in cross_release_lower or 'portugues' in cross_release_lower or 'português' in cross_release_lower):
+                    if 'dual' in cross_release_lower or 'dublado' in cross_release_lower or 'nacional' in cross_release_lower or 'portugues' in cross_release_lower or 'português' in cross_release_lower:
                         has_brazilian_audio = True
-                    # Detecta japonês no cross_data
-                    if not has_japones_audio and ('japonês' in cross_release_lower or 'japones' in cross_release_lower or 'japanese' in cross_release_lower or re.search(r'\bjap\b', cross_release_lower)):
-                        has_japones_audio = True
-                    # Detecta legendado no cross_data
-                    if not has_legendado and ('legendado' in cross_release_lower or 'legenda' in cross_release_lower or re.search(r'\bleg\b', cross_release_lower)):
-                        has_legendado = True
         except Exception:
             pass
-            
-        # Só busca no metadata se ainda não encontrou todas as informações necessárias
-        if not has_dual and not has_brazilian_audio and not has_japones_audio and not has_legendado:
-            try:
-                from magnet.metadata import fetch_metadata_from_itorrents
-                metadata = fetch_metadata_from_itorrents(info_hash)
-                if metadata and metadata.get('name'):
-                    metadata_name = metadata.get('name', '').lower()
-                    # Detecta DUAL no metadata
-                    if not has_dual and 'dual' in metadata_name:
-                        has_dual = True
-                        has_brazilian_audio = True  # DUAL também indica português
-                    # Detecta português no metadata (DUBLADO, NACIONAL, PORTUGUES, PORTUGUÊS)
-                    elif not has_brazilian_audio and ('dublado' in metadata_name or 'nacional' in metadata_name or 'portugues' in metadata_name or 'português' in metadata_name):
-                        has_brazilian_audio = True
-                    # Detecta japonês no metadata
-                    if not has_japones_audio and ('japonês' in metadata_name or 'japones' in metadata_name or 'japanese' in metadata_name or re.search(r'\bjap\b', metadata_name)):
-                        has_japones_audio = True
-                    # Detecta legendado no metadata
-                    if not has_legendado and ('legendado' in metadata_name or 'legenda' in metadata_name or re.search(r'\bleg\b', metadata_name)):
-                        has_legendado = True
-            except Exception:
-                pass
     
-    # Processa detecção via HTML (audio_info_from_html)
-    # [Eng] só é adicionada quando detectado via HTML como 'dual' ou quando detecta DUAL em qualquer fonte
-    has_eng_from_html = False
-    if audio_info_from_html == 'dual':
-        has_dual = True
-        has_brazilian_audio = True  # DUAL também indica português
+    # ============================================================================
+    # TAG [Eng]
+    # FONTE PRINCIPAL: HTML (audio_info: Inglês)
+    # ============================================================================
     
-    # Verifica diretamente no HTML para tags independentes
-    # Se há "Idioma: Inglês" no HTML → adiciona [Eng] (independente de ter legenda ou não)
-    # Se há "Áudio: Japonês" no HTML → adiciona [Jap] (independente de ter legenda ou não)
-    # Se há "Legenda: PT-BR" no HTML → adiciona [Leg] (independente de ter inglês ou não)
-    if audio_html_content:
-        # Verifica se há inglês no áudio/idioma
-        has_ingles_audio_html = re.search(r'(?i)(?:Áudio|Idioma)\s*:?\s*.*(?:Inglês|Ingles|English)', audio_html_content)
-        if has_ingles_audio_html:
-            has_eng_from_html = True
-        
-        # Verifica se há japonês no áudio/idioma
-        has_japones_audio_html = re.search(r'(?i)(?:Áudio|Idioma)\s*:?\s*.*(?:Japonês|Japones|Japanese)', audio_html_content)
-        if has_japones_audio_html:
+    if audio_info_from_html:
+        audio_info_str = str(audio_info_from_html).lower()
+        if 'inglês' in audio_info_str or 'ingles' in audio_info_str or 'english' in audio_info_str:
+            has_eng_audio = True
+    
+    # FALLBACK 1: Magnet (dual/legendado/legenda/leg)
+    if release_title_magnet and not has_eng_audio:
+        release_lower = release_title_magnet.lower()
+        if 'dual' in release_lower or 'legendado' in release_lower or 'legenda' in release_lower or re.search(r'\bleg\b', release_lower):
+            has_eng_audio = True
+    
+    # FALLBACK 2: Metadata
+    if info_hash and not skip_metadata and not has_eng_audio:
+        try:
+            from magnet.metadata import fetch_metadata_from_itorrents
+            metadata = fetch_metadata_from_itorrents(info_hash)
+            if metadata and metadata.get('name'):
+                metadata_name = metadata.get('name', '').lower()
+                if 'dual' in metadata_name or 'legendado' in metadata_name or 'legenda' in metadata_name or re.search(r'\bleg\b', metadata_name):
+                    has_eng_audio = True
+        except Exception:
+            pass
+    
+    # FALLBACK 3: Cross Data
+    if info_hash and not skip_metadata and not has_eng_audio:
+        try:
+            from utils.text.cross_data import get_cross_data_from_redis
+            cross_data = get_cross_data_from_redis(info_hash)
+            if cross_data and cross_data.get('release_title_magnet'):
+                cross_release = cross_data.get('release_title_magnet')
+                if cross_release and cross_release != 'N/A':
+                    cross_release_lower = str(cross_release).lower()
+                    if 'dual' in cross_release_lower or 'legendado' in cross_release_lower or 'legenda' in cross_release_lower or re.search(r'\bleg\b', cross_release_lower):
+                        has_eng_audio = True
+        except Exception:
+            pass
+    
+    # ============================================================================
+    # TAG [Jap]
+    # FONTE PRINCIPAL: HTML (audio_info: 'japonês')
+    # ============================================================================
+    
+    if audio_info_from_html:
+        audio_info_str = str(audio_info_from_html).lower()
+        if 'japonês' in audio_info_str or 'japones' in audio_info_str or 'japanese' in audio_info_str or 'jap' in audio_info_str:
             has_japones_audio = True
-        
-        # Verifica se há legenda PT-BR
-        has_legenda_portugues_html = re.search(r'(?i)Legenda\s*:?\s*.*(?:PT-BR|PTBR|Português|Portugues|PT)', audio_html_content)
-        if has_legenda_portugues_html:
-            has_legendado = True
     
-    # Se detectado via HTML como 'legendado' (fallback quando não tem audio_html_content)
-    if audio_info_from_html == 'legendado' and not has_legendado:
-        has_legendado = True
-        # Se não tem audio_html_content, tenta detectar inglês no release_title
-        if not audio_html_content and not has_eng_from_html:
-            if release_title_magnet:
-                release_lower = release_title_magnet.lower()
-                # Se não tem português/dublado/nacional no release_title, assume inglês quando há legenda PT-BR via HTML
-                if ('português' not in release_lower and 'dublado' not in release_lower and 'nacional' not in release_lower and 
-                    'portugues' not in release_lower):
-                    has_eng_from_html = True
-            else:
-                # Se não tem release_title, assume inglês quando há legenda PT-BR via HTML
-                has_eng_from_html = True
+    # FALLBACK 1: Magnet (japonês/japones/japanese/jap)
+    if release_title_magnet and not has_japones_audio:
+        release_lower = release_title_magnet.lower()
+        if 'japonês' in release_lower or 'japones' in release_lower or 'japanese' in release_lower or re.search(r'\bjap\b', release_lower):
+            has_japones_audio = True
     
-    # Se detectado via HTML como 'português', adiciona [Brazilian]
-    if audio_info_from_html == 'português':
-        has_brazilian_audio = True
+    # FALLBACK 2: Metadata
+    if info_hash and not skip_metadata and not has_japones_audio:
+        try:
+            from magnet.metadata import fetch_metadata_from_itorrents
+            metadata = fetch_metadata_from_itorrents(info_hash)
+            if metadata and metadata.get('name'):
+                metadata_name = metadata.get('name', '').lower()
+                if 'japonês' in metadata_name or 'japones' in metadata_name or 'japanese' in metadata_name or re.search(r'\bjap\b', metadata_name):
+                    has_japones_audio = True
+        except Exception:
+            pass
     
-    # Se detectado via HTML como 'japonês', adiciona [Jap]
-    if audio_info_from_html == 'japonês':
-        has_japones_audio = True
+    # FALLBACK 3: Cross Data
+    if info_hash and not skip_metadata and not has_japones_audio:
+        try:
+            from utils.text.cross_data import get_cross_data_from_redis
+            cross_data = get_cross_data_from_redis(info_hash)
+            if cross_data and cross_data.get('release_title_magnet'):
+                cross_release = cross_data.get('release_title_magnet')
+                if cross_release and cross_release != 'N/A':
+                    cross_release_lower = str(cross_release).lower()
+                    if 'japonês' in cross_release_lower or 'japones' in cross_release_lower or 'japanese' in cross_release_lower or re.search(r'\bjap\b', cross_release_lower):
+                        has_japones_audio = True
+        except Exception:
+            pass
     
-    # Se detectou DUAL (via HTML, release_title ou metadata), adiciona [Eng]
-    if has_dual:
-        has_eng_from_html = True
+    # ============================================================================
+    # ADICIONA TAGS CONFORME DETECTADO
+    # ============================================================================
     
-    # Adiciona tags conforme detectado
     tags_to_add = []
     if has_brazilian_audio and not has_brazilian:
         tags_to_add.append('[Brazilian]')
-    if has_eng_from_html and not has_eng:
+    if has_eng_audio and not has_eng:
         tags_to_add.append('[Eng]')
     if has_japones_audio and not has_jap:
         tags_to_add.append('[Jap]')
-    if has_legendado and not has_leg:
-        tags_to_add.append('[Leg]')
     
-    # Remove DUAL, DUBLADO, NACIONAL, PORTUGUES, LEGENDADO do título se as tags correspondentes foram adicionadas
-    # (não precisa manter no título se a tag já indica o tipo de áudio)
+    # Remove palavras do título se as tags correspondentes foram adicionadas
     if tags_to_add:
         # Remove DUAL se [Brazilian] ou [Eng] foi adicionado
         if '[Brazilian]' in tags_to_add or '[Eng]' in tags_to_add:
-            # Remove DUAL (case insensitive, com pontos antes/depois)
             title = re.sub(r'\.?\.?DUAL\.?\.?', '.', title, flags=re.IGNORECASE)
-            title = re.sub(r'\.{2,}', '.', title)  # Remove pontos duplicados
+            title = re.sub(r'\.{2,}', '.', title)
             title = title.strip('.')
         # Remove DUBLADO, NACIONAL, PORTUGUES se [Brazilian] foi adicionado
         if '[Brazilian]' in tags_to_add:
@@ -587,13 +666,12 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
             title = re.sub(r'\.?\.?JAP\.?\.?', '.', title, flags=re.IGNORECASE)
             title = re.sub(r'\.{2,}', '.', title)
             title = title.strip('.')
-        # Remove LEGENDADO se [Leg] foi adicionado
-        if '[Leg]' in tags_to_add:
-            title = re.sub(r'\.?\.?LEGENDADO\.?\.?', '.', title, flags=re.IGNORECASE)
-            title = re.sub(r'\.?\.?LEGENDA\.?\.?', '.', title, flags=re.IGNORECASE)
-            title = re.sub(r'\.?\.?LEG\.?\.?', '.', title, flags=re.IGNORECASE)
-            title = re.sub(r'\.{2,}', '.', title)
-            title = title.strip('.')
+        # Remove LEGENDADO, LEGENDA, LEG (mesmo que não adicione [Leg])
+        title = re.sub(r'\.?\.?LEGENDADO\.?\.?', '.', title, flags=re.IGNORECASE)
+        title = re.sub(r'\.?\.?LEGENDA\.?\.?', '.', title, flags=re.IGNORECASE)
+        title = re.sub(r'\.?\.?LEG\.?\.?', '.', title, flags=re.IGNORECASE)
+        title = re.sub(r'\.{2,}', '.', title)
+        title = title.strip('.')
         
         title = title.rstrip()
         title = f"{title} {' '.join(tags_to_add)}"

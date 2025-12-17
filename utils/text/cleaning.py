@@ -59,6 +59,9 @@ def clean_title(title: str) -> str:
     cleaned = REGEX_MULTIPLE_DOTS.sub('.', cleaned)
     cleaned = REGEX_LEADING_TRAILING_DOTS.sub('', cleaned)
     cleaned = REGEX_SPACE_AROUND_DOTS.sub('.', cleaned)
+    # Remove MKV, MP4, AVI, etc. do início do título (formato de arquivo não faz parte do título)
+    cleaned = re.sub(r'^(MKV|MP4|AVI|MPEG|MOV)\.', '', cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip('.')
     return cleaned.strip()
 
 

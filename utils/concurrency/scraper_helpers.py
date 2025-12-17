@@ -127,8 +127,7 @@ def process_links_parallel(
     if use_flaresolverr:
         logger.debug(f"{scraper_prefix}Processando {total_links} links SEQUENCIALMENTE (FlareSolverr ativo)")
         for idx, link in enumerate(original_order):
-            link_short = link.split('/')[-2] if '/' in link else link[-50:]
-            logger.debug(f"{scraper_prefix}[{idx+1}/{total_links}] {link_short}")
+            logger.debug(f"{scraper_prefix}[{idx+1}/{total_links}] {link}")
             try:
                 torrents = process_func(link)
                 results_by_index[idx] = torrents
@@ -148,8 +147,7 @@ def process_links_parallel(
         
         logger.debug(f"{scraper_prefix}Processando {total_links} links em PARALELO")
         for idx, link in enumerate(original_order):
-            link_short = link.split('/')[-2] if '/' in link else link[-50:]
-            logger.debug(f"{scraper_prefix}[{idx+1}] {link_short}")
+            logger.debug(f"{scraper_prefix}[{idx+1}] {link}")
         
         link_to_index = {link: idx for idx, link in enumerate(original_order)}
         actual_max_workers = min(max(1, total_links), max_workers)
@@ -189,9 +187,8 @@ def process_links_parallel(
     for idx in range(total_links):
         if idx in results_by_index:
             link = original_order[idx]
-            link_short = link.split('/')[-2] if '/' in link else link[-50:]
             torrents_count = len(results_by_index[idx])
-            logger.info(f"{scraper_prefix}Página processada [{idx+1}/{total_links}]: {link_short} - {torrents_count} magnets encontrados")
+            logger.info(f"{scraper_prefix}Página processada [{idx+1}/{total_links}]: {link} - {torrents_count} magnets encontrados")
     
     return all_torrents
 

@@ -692,11 +692,67 @@
         }
 
         function extractAudioTags(title) {
-            const idiomas = [], legendas = [];
+            // As tags [Brazilian], [Eng], [Jap] devem permanecer no título
+            // Apenas extrai os idiomas para exibição separada
+            const finalTitle = title.trim();
+            
+            // Extrai idiomas das tags (suporta múltiplos - máximo 3)
+            const idiomas = [];
             if (title.includes('[Brazilian]')) idiomas.push('Português');
             if (title.includes('[Eng]')) idiomas.push('Inglês');
-            if (title.includes('[Leg]')) legendas.push('Português');
-            return { finalTitle: title.trim(), idiomas, legendas };
+            if (title.includes('[Jap]')) idiomas.push('Japonês');
+            
+            // Limita a 3 idiomas no máximo
+            const idiomasLimitados = idiomas.slice(0, 3);
+            
+            return { 
+                finalTitle: finalTitle, // Mantém as tags no título
+                idiomas: idiomasLimitados,
+                legendas: [] // Tag [Leg] foi removida - legenda não é mais detectada via tags
+            };
+        }
+        
+        function determineLegenda(torrent) {
+            // Lógica de detecção de legenda seguindo ordem de fallbacks:
+            // 1. Campo has_legenda do torrent (se disponível - vem do cross_data)
+            // 2. Busca no título processado por palavras-chave (legendado/legenda/leg)
+            // 3. Busca no magnet original (legendado/legenda/leg)
+            // 4. Busca no magnet link (dn=) se magnet_original não disponível
+            
+            // Fonte 1: Campo has_legenda (se disponível)
+            if (torrent.has_legenda === true) {
+                return 'Português';
+            }
+            
+            // Fallback 1: Busca no título processado
+            const title = (torrent.title || '').toLowerCase();
+            if (title.includes('legendado') || title.includes('legenda') || /\bleg\b/.test(title)) {
+                return 'Português';
+            }
+            
+            // Fallback 2: Busca no magnet original
+            const magnetOriginal = (torrent.magnet_original || '').toLowerCase();
+            if (magnetOriginal.includes('legendado') || magnetOriginal.includes('legenda') || /\bleg\b/.test(magnetOriginal)) {
+                return 'Português';
+            }
+            
+            // Fallback 3: Busca no magnet link (extrai dn=)
+            const magnetLink = (torrent.magnet || torrent.magnet_link || '').toLowerCase();
+            if (magnetLink.includes('magnet:')) {
+                try {
+                    const dnMatch = magnetLink.match(/[&?]dn=([^&]+)/i);
+                    if (dnMatch) {
+                        const magnetName = decodeURIComponent(dnMatch[1]).toLowerCase();
+                        if (magnetName.includes('legendado') || magnetName.includes('legenda') || /\bleg\b/.test(magnetName)) {
+                            return 'Português';
+                        }
+                    }
+                } catch (e) {
+                    // Ignora erros de decodificação
+                }
+            }
+            
+            return null;
         }
 
         function formatSize(size) {
@@ -726,9 +782,12 @@
                 return;
             }
             resultsList.innerHTML = torrents.map(torrent => {
-                const { finalTitle, idiomas, legendas } = extractAudioTags(torrent.title || '');
+                const { finalTitle, idiomas } = extractAudioTags(torrent.title || '');
                 const idiomasStr = idiomas.length > 0 ? idiomas.join(', ') : 'N/A';
-                const legendaStr = legendas.length > 0 ? legendas.join(', ') : 'N/A';
+                
+                // Determina legenda usando função dedicada (não mais via tag [Leg])
+                const legendaDetectada = determineLegenda(torrent);
+                const legendaStr = legendaDetectada || 'N/A';
                 const detailsUrl = torrent.details || '#';
                 const magnetLink = torrent.magnet || torrent.magnet_link || '#';
                 const formattedUrl = formatUrl(detailsUrl);

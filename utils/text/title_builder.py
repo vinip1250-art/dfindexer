@@ -54,6 +54,10 @@ def prepare_release_title(
             pass
         normalized = normalized.strip()
         
+        # Remove domínios e tags comuns (incluindo HIDRATORRENTS.ORG)
+        from utils.text.cleaning import clean_title
+        normalized = clean_title(normalized)
+        
         # Remove tags entre colchetes (ex: [EA], [rich_jc], etc.)
         normalized = re.sub(r'\[[^\]]*\]', '', normalized)
         

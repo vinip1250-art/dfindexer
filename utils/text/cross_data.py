@@ -12,7 +12,7 @@ def get_cross_data_from_redis(info_hash: str) -> Optional[Dict[str, Any]]:
     """
     Busca dados cruzados no Redis por info_hash.
     Retorna um dicionário com os campos disponíveis ou None se não encontrado.
-    Campos: title_original_html, magnet_processed, title_translated_html, imdb, missing_dn, origem_audio_tag, tracker_seed, tracker_leech, size
+    Campos: title_original_html, magnet_processed, title_translated_html, imdb, missing_dn, origem_audio_tag, tracker_seed, tracker_leech, size, has_legenda
     """
     if not info_hash or len(info_hash) != 40:
         return None
@@ -40,6 +40,8 @@ def get_cross_data_from_redis(info_hash: str) -> Optional[Dict[str, Any]]:
             # Converte tipos específicos
             if field_str == 'missing_dn':
                 result[field_str] = value_str.lower() == 'true'
+            elif field_str == 'has_legenda':
+                result[field_str] = value_str.lower() == 'true'
             elif field_str in ('tracker_seed', 'tracker_leech'):
                 # Converte para inteiro
                 try:
@@ -60,7 +62,7 @@ def get_cross_data_from_redis(info_hash: str) -> Optional[Dict[str, Any]]:
 def save_cross_data_to_redis(info_hash: str, data: Dict[str, Any]) -> None:
     """
     Salva dados cruzados no Redis por info_hash.
-    Campos aceitos: title_original_html, magnet_processed, title_translated_html, imdb, missing_dn, origem_audio_tag, tracker_seed, tracker_leech, size
+    Campos aceitos: title_original_html, magnet_processed, title_translated_html, imdb, missing_dn, origem_audio_tag, tracker_seed, tracker_leech, size, has_legenda
     """
     if not info_hash or len(info_hash) != 40:
         return
@@ -88,7 +90,8 @@ def save_cross_data_to_redis(info_hash: str, data: Dict[str, Any]) -> None:
             'origem_audio_tag',
             'tracker_seed',
             'tracker_leech',
-            'size'
+            'size',
+            'has_legenda'  # Indica se o torrent tem legenda (extraído do HTML ou detectado no título)
         ]
         
         # Prepara dados para salvar (apenas campos válidos e não vazios)

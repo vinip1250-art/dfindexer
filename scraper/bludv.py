@@ -251,94 +251,55 @@ class BludvScraper(BaseScraper):
                     if audio_text:
                         break
             
-            # Extrai Legenda - busca primeiro no HTML completo
-            legenda_patterns = [
-                r'(?i)Legendas?\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|</span|Qualidade|Duração|Formato|Vídeo|Nota|Tamanho|IMDb|Áudio|Audio|$)',
-                r'(?i)<[^>]*>Legendas?\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|Qualidade|$)',
-                r'(?i)<strong>Legendas?\s*:\s*</strong>\s*(?:<br\s*/?>)?\s*\n\s*([^<\n\r]+?)(?:<br|</div|</p|</strong|Nota|Tamanho|$)',
-            ]
+            # Extrai legenda usando função dedicada
+            from utils.parsing.legend_extraction import extract_legenda_from_page, determine_legend_info
+            legenda = extract_legenda_from_page(doc, scraper_type='bludv', content_div=content_div)
             
-            for pattern in legenda_patterns:
-                legenda_match = re.search(pattern, content_html, re.DOTALL)
-                if legenda_match:
-                    legenda = legenda_match.group(1).strip()
-                    # Remove entidades HTML e tags
-                    legenda = html.unescape(legenda)
-                    legenda = re.sub(r'<[^>]+>', '', legenda).strip()
-                    # Remove espaços extras e normaliza
-                    legenda = re.sub(r'\s+', ' ', legenda).strip()
-                    # Para antes de encontrar palavras de parada
-                    stop_words = ['Nota', 'Tamanho', 'IMDb', 'Vídeo', 'Áudio', 'Audio', 'Qualidade', 'Duração', 'Formato']
-                    for stop_word in stop_words:
-                        if stop_word in legenda:
-                            idx = legenda.index(stop_word)
-                            legenda = legenda[:idx].strip()
-                            break
-                    if legenda:
-                        break
-            
-            # Se não encontrou no HTML completo, busca nos elementos individuais
-            if not legenda:
-                for elem in content_div.find_all(['p', 'span', 'div', 'strong', 'em', 'li']):
-                    elem_html = str(elem)
-                    
-                    for pattern in legenda_patterns:
-                        legenda_match = re.search(pattern, elem_html, re.DOTALL)
-                        if legenda_match:
-                            legenda = legenda_match.group(1).strip()
-                            # Remove entidades HTML e tags
-                            legenda = html.unescape(legenda)
-                            legenda = re.sub(r'<[^>]+>', '', legenda).strip()
-                            # Remove espaços extras e normaliza
-                            legenda = re.sub(r'\s+', ' ', legenda).strip()
-                            # Para antes de encontrar palavras de parada
-                            stop_words = ['Nota', 'Tamanho', 'IMDb', 'Vídeo', 'Áudio', 'Audio', 'Qualidade', 'Duração', 'Formato']
-                            for stop_word in stop_words:
-                                if stop_word in legenda:
-                                    idx = legenda.index(stop_word)
-                                    legenda = legenda[:idx].strip()
-                                    break
-                            if legenda:
-                                break
-                    if legenda:
-                        break
+            # Determina legend_info baseado na legenda extraída
+            legend_info = determine_legend_info(legenda) if legenda else None
             
             # Concatena HTML de todos os parágrafos para verificação adicional
             if all_paragraphs_html:
                 audio_html_content = ' '.join(all_paragraphs_html)
+                # Se extraiu legenda mas não está no HTML, adiciona explicitamente
+                if legenda and 'Legenda' not in audio_html_content and 'legenda' not in audio_html_content.lower():
+                    audio_html_content += f' Legenda: {legenda}'
             
-            # Determina audio_info baseado em Áudio e Legenda extraídos
-            if audio_text or legenda:
-                audio_lower = audio_text.lower() if audio_text else ''
-                legenda_lower = legenda.lower() if legenda else ''
+            # Determina audio_info baseado apenas em Áudio (legenda será tratada separadamente)
+            # Suporta múltiplos idiomas: "Português, Inglês" ou "Português, Japonês" (máximo 3)
+            if audio_text:
+                audio_lower = audio_text.lower()
+                
+                # Lista de idiomas detectados
+                idiomas_detectados = []
                 
                 # Verifica se tem português no áudio (PT-BR é considerado português)
-                has_portugues_audio = (
-                    'português' in audio_lower or 'portugues' in audio_lower or 
+                if ('português' in audio_lower or 'portugues' in audio_lower or 
                     'pt-br' in audio_lower or 'ptbr' in audio_lower or 
-                    'pt br' in audio_lower
-                )
-                # Verifica se tem português na legenda (PT-BR é considerado português)
-                has_portugues_legenda = (
-                    'português' in legenda_lower or 'portugues' in legenda_lower or 
-                    'pt-br' in legenda_lower or 'ptbr' in legenda_lower or 
-                    'pt br' in legenda_lower
-                )
+                    'pt br' in audio_lower):
+                    idiomas_detectados.append('português')
                 # Verifica se tem Inglês no áudio
-                has_ingles_audio = 'inglês' in audio_lower or 'ingles' in audio_lower or 'english' in audio_lower or 'en' in audio_lower
-                # Verifica se tem Inglês em qualquer lugar
-                has_ingles = has_ingles_audio or 'inglês' in legenda_lower or 'ingles' in legenda_lower or 'english' in legenda_lower
+                if 'inglês' in audio_lower or 'ingles' in audio_lower or 'english' in audio_lower or 'en' in audio_lower:
+                    idiomas_detectados.append('inglês')
+                # Verifica se tem Japonês no áudio
+                if 'japonês' in audio_lower or 'japones' in audio_lower or 'japanese' in audio_lower or 'jap' in audio_lower:
+                    idiomas_detectados.append('japonês')
                 
-                # Lógica: Se tem português E inglês no áudio → DUAL (gera [Brazilian] e [Eng])
-                if has_portugues_audio and has_ingles_audio:
-                    audio_info = 'dual'
-                # Se tem apenas português no áudio → gera [Brazilian]
-                elif has_portugues_audio:
-                    audio_info = 'português'
-                # Se tem legenda PT-BR (português) OU tem Inglês → gera [Leg]
-                # PT-BR na legenda indica que o áudio é em outro idioma (geralmente inglês) com legenda em português
-                elif has_portugues_legenda or has_ingles:
-                    audio_info = 'legendado'
+                # Limita a 3 idiomas no máximo
+                idiomas_detectados = idiomas_detectados[:3]
+                
+                # Determina audio_info baseado nos idiomas detectados
+                if len(idiomas_detectados) >= 2:
+                    # Se tem 2 ou mais idiomas, usa 'dual' (português + outro)
+                    if 'português' in idiomas_detectados and 'inglês' in idiomas_detectados:
+                        audio_info = 'dual'  # Português + Inglês
+                    elif 'português' in idiomas_detectados:
+                        audio_info = 'dual'  # Português + outro idioma
+                    else:
+                        # Se não tem português mas tem múltiplos, usa o primeiro
+                        audio_info = idiomas_detectados[0]
+                elif len(idiomas_detectados) == 1:
+                    audio_info = idiomas_detectados[0]
         
         if content_div:
             for p in content_div.select('p, span, div'):
@@ -454,7 +415,9 @@ class BludvScraper(BaseScraper):
                 # Se ainda está missing_dn, tenta buscar do cross_data
                 if missing_dn and cross_data and cross_data.get('magnet_processed'):
                     magnet_original = cross_data['magnet_processed']
-                    missing_dn = False
+                    # A limpeza de domínios e formatos será feita em prepare_release_title()
+                    if magnet_original and len(magnet_original.strip()) >= 3:
+                        missing_dn = False
                 
                 # Salva magnet_processed no Redis se encontrado (para reutilização por outros scrapers)
                 if not missing_dn and magnet_original:
@@ -507,6 +470,16 @@ class BludvScraper(BaseScraper):
                 if sizes and idx < len(sizes):
                     size = sizes[idx]
                 
+                # Determina presença de legenda seguindo ordem de fallbacks
+                from utils.parsing.legend_extraction import determine_legend_presence
+                has_legenda = determine_legend_presence(
+                    legend_info_from_html=legend_info,
+                    audio_html_content=audio_html_content,
+                    release_title_magnet=original_release_title,
+                    info_hash=info_hash,
+                    skip_metadata=self._skip_metadata
+                )
+                
                 # Salva dados cruzados no Redis para reutilização por outros scrapers
                 try:
                     from utils.text.cross_data import save_cross_data_to_redis
@@ -517,7 +490,8 @@ class BludvScraper(BaseScraper):
                         'imdb': imdb if imdb else None,
                         'missing_dn': missing_dn,
                         'origem_audio_tag': origem_audio_tag if origem_audio_tag != 'N/A' else None,
-                        'size': size if size and size.strip() else None
+                        'size': size if size and size.strip() else None,
+                        'has_legenda': has_legenda
                     }
                     save_cross_data_to_redis(info_hash, cross_data_to_save)
                 except Exception:

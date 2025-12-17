@@ -13,7 +13,8 @@ STOP_WORDS = [
 RELEASE_CLEAN_REGEX = re.compile(
     r'(?i)(COMANDO\.TO|COMANDOTORRENTS|WWW\.BLUDV\.TV|BLUDV|WWW\.COMANDOTORRENTS|'
     r'TORRENTBR|BAIXEFILMES|\[EZTVx\.to\]|\[TGx\]|\[rartv\]|\[YTS\.MX\]|'
-    r'TRUFFLE|ETHEL|FLUX|GalaxyRG|TOONSHUB|ERAI\.RAWS|WWW\.[A-Z0-9.-]+\.[A-Z]{2,}|\[ACESSE[^\]]*\])\s*-?\s*'
+    r'TRUFFLE|ETHEL|FLUX|GalaxyRG|TOONSHUB|ERAI\.RAWS|HIDRATORRENTS\.ORG|NETFLIX|'
+    r'WWW\.[A-Z0-9.-]+\.[A-Z]{2,}|\[ACESSE[^\]]*\])\s*-?\s*'
 )
 
 # Regexes compiladas para melhor performance

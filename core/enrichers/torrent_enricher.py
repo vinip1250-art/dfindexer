@@ -81,6 +81,7 @@ class TorrentEnricher:
     
     def _ensure_titles_complete(self, torrents: List[Dict]) -> None:
         # Garante que títulos estão completos
+        # OTIMIZAÇÃO: Só busca metadata se necessário para o filtro (quando não temos original_title nem title_translated_processed)
         from utils.text.cross_data import get_cross_data_from_redis
         
         for torrent in torrents:
@@ -103,36 +104,47 @@ class TorrentEnricher:
                     pass
             
             title = torrent.get('title', '')
-            # Evita buscar metadata aqui se já será buscado em _fetch_metadata_batch
-            # Apenas busca se título está realmente vazio E não será buscado depois
-            # (marcado com _metadata_fetched para evitar busca duplicada)
-            if (not title or len(title.strip()) < 10) and not torrent.get('_metadata_fetched'):
-                if info_hash:
-                    try:
-                        # Verifica cache primeiro para evitar busca desnecessária
-                        from cache.metadata_cache import MetadataCache
-                        metadata_cache = MetadataCache()
-                        cached_metadata = metadata_cache.get(info_hash.lower())
-                        if cached_metadata and cached_metadata.get('name'):
-                            name = cached_metadata.get('name', '').strip()
-                            if name and len(name) >= 3:
-                                torrent['title'] = name
-                        else:
-                            # Só busca se não está em cache (será buscado em batch depois)
-                            scraper_name = getattr(self, '_current_scraper_name', None)
-                            # Tenta obter título de múltiplas fontes para melhorar o log
-                            title = (torrent.get('title') or 
-                                    torrent.get('original_title') or 
-                                    torrent.get('title_translated_processed') or
-                                    torrent.get('release_title_magnet') or
-                                    None)
-                            metadata = fetch_metadata_from_itorrents(info_hash, scraper_name=scraper_name, title=title)
+            original_title = torrent.get('original_title', '')
+            title_translated = torrent.get('title_translated_processed', '')
+            
+            # OTIMIZAÇÃO: Só busca metadata se:
+            # 1. Título está vazio (< 10 caracteres)
+            # 2. E não temos original_title nem title_translated_processed (necessários para o filtro)
+            # 3. E não foi marcado como já buscado (_metadata_fetched)
+            # Isso evita buscas desnecessárias antes do filtro quando já temos dados suficientes
+            needs_metadata_for_filter = (
+                (not title or len(title.strip()) < 10) and
+                not original_title and
+                not title_translated and
+                not torrent.get('_metadata_fetched')
+            )
+            
+            if needs_metadata_for_filter and info_hash:
+                try:
+                    # Verifica cache primeiro para evitar busca desnecessária
+                    from cache.metadata_cache import MetadataCache
+                    metadata_cache = MetadataCache()
+                    cached_metadata = metadata_cache.get(info_hash.lower())
+                    if cached_metadata and cached_metadata.get('name'):
+                        name = cached_metadata.get('name', '').strip()
+                        if name and len(name) >= 3:
+                            torrent['title'] = name
+                    else:
+                        # Só busca se não está em cache (será buscado em batch depois)
+                        scraper_name = getattr(self, '_current_scraper_name', None)
+                        # Tenta obter título de múltiplas fontes para melhorar o log
+                        title_for_log = (torrent.get('title') or 
+                                        torrent.get('original_title') or 
+                                        torrent.get('title_translated_processed') or
+                                        torrent.get('release_title_magnet') or
+                                        None)
+                        metadata = fetch_metadata_from_itorrents(info_hash, scraper_name=scraper_name, title=title_for_log)
                         if metadata and metadata.get('name'):
                             name = metadata.get('name', '').strip()
                             if name and len(name) >= 3:
                                 torrent['title'] = name
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
     
     def _fetch_metadata_batch(self, torrents: List[Dict]) -> None:
         # Busca metadata em lote com semáforo global para limitar requisições simultâneas

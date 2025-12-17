@@ -39,10 +39,9 @@ Todos os títulos são padronizados no formato:
 
 ### 🎬 Tags de Idioma
 O sistema adiciona automaticamente tags de idioma aos títulos quando detecta informações de áudio:
-- **[Brazilian]**: Adicionada quando detecta `DUAL`, `DUBLADO`, `NACIONAL` ou `PORTUGUES` no `release_title_magnet`, metadata ou HTML da página
-- **[Eng]**: Adicionada quando detecta `DUAL` (via HTML como 'dual', `release_title_magnet` ou metadata). DUAL indica português + inglês, então adiciona ambas as tags
-- **[Jap]**: Adicionada quando detecta `JAPONÊS`, `JAPONES`, `JAPANESE` ou `JAP` no `release_title_magnet`, metadata ou HTML da página
-- **[Leg]**: Adicionada quando detecta `LEGENDADO`, `LEGENDA` ou `LEG` no `release_title_magnet`, metadata ou HTML da página
+- **[Brazilian]**: Fonte Principal: HTML (`audio_info: 'português'`), Fallback 1: Magnet (`dual/dublado/nacional/portugues`), Fallback 2: Metadata, Fallback 3: Cross Data
+- **[Eng]**: Fonte Principal: HTML (`audio_info: 'Inglês'`), Fallback 1: Magnet (`dual/legendado/legenda/leg`), Fallback 2: Metadata, Fallback 3: Cross Data
+- **[Jap]**: Fonte Principal: HTML (`audio_info: 'japonês'`), Fallback 1: Magnet (`japonês/japones/japanese/jap`), Fallback 2: Metadata, Fallback 3: Cross Data
 
 ### 🌐 Sites Suportados
 - ✅ **$†@Я©Ҝ**

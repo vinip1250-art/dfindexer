@@ -306,7 +306,9 @@ class StarckScraper(BaseScraper):
                 # Se ainda está missing_dn, tenta buscar do cross_data
                 if missing_dn and cross_data and cross_data.get('magnet_processed'):
                     magnet_original = cross_data['magnet_processed']
-                    missing_dn = False
+                    # A limpeza de domínios e formatos será feita em prepare_release_title()
+                    if magnet_original and len(magnet_original.strip()) >= 3:
+                        missing_dn = False
                 
                 # Salva magnet_processed no Redis se encontrado (para reutilização por outros scrapers)
                 if not missing_dn and magnet_original:
@@ -330,10 +332,10 @@ class StarckScraper(BaseScraper):
                     original_title, year, original_release_title, title_translated_html=title_translated_processed if title_translated_processed else None, magnet_original_magnet=magnet_original
                 )
                 
-                # Adiciona [Brazilian], [Eng] (via HTML) e/ou [Leg] conforme detectado
+                # Adiciona [Brazilian], [Eng] conforme detectado
                 # NÃO adiciona DUAL/PORTUGUES/LEGENDADO ao release_title - apenas passa audio_info para a função de tags
-                # Passa também o HTML para verificação independente de inglês e legenda
-                # As tags são independentes: se tem "Idioma: Inglês" → [Eng], se tem "Legenda: PT-BR" → [Leg]
+                # Passa também o HTML para verificação independente de inglês
+                # As tags são independentes: se tem "Idioma: Inglês" → [Eng]
                 # SEMPRE passa o HTML se existir, mesmo que audio_info não tenha sido detectado
                 final_title = add_audio_tag_if_needed(standardized_title, original_release_title, info_hash=info_hash, skip_metadata=self._skip_metadata, audio_info_from_html=audio_info, audio_html_content=audio_html_content if audio_html_content else None)
                 

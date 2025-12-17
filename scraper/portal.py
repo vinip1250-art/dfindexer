@@ -531,7 +531,9 @@ class PortalScraper(BaseScraper):
                 # Se ainda está missing_dn, tenta buscar do cross_data
                 if missing_dn and cross_data and cross_data.get('magnet_processed'):
                     magnet_original = cross_data['magnet_processed']
-                    missing_dn = False
+                    # A limpeza de domínios e formatos será feita em prepare_release_title()
+                    if magnet_original and len(magnet_original.strip()) >= 3:
+                        missing_dn = False
                 
                 # Salva magnet_processed no Redis se encontrado (para reutilização por outros scrapers)
                 if not missing_dn and magnet_original:
@@ -555,7 +557,7 @@ class PortalScraper(BaseScraper):
                     original_title, year, original_release_title, title_translated_html=title_translated_processed if title_translated_processed else None, magnet_original_magnet=magnet_original
                 )
                 
-                # Adiciona [Brazilian], [Eng] (via HTML) e/ou [Leg] conforme detectado
+                # Adiciona [Brazilian], [Eng] conforme detectado
                 # NÃO adiciona DUAL/PORTUGUES/LEGENDADO ao release_title - apenas passa audio_info para a função de tags
                 final_title = add_audio_tag_if_needed(
                     standardized_title, 
