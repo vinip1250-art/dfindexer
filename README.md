@@ -20,7 +20,7 @@ Indexador em Python que organiza torrents brasileiros em formato padronizado, pr
 - ✅ **Padronização Inteligente**: Títulos padronizados para facilitar matching automático
 - ✅ **Metadata API**: Busca automática de tamanhos, datas e nomes via iTorrents.org
 - ✅ **Tracker Scraping**: Consulta automática de trackers UDP para seeds/leechers
-- ✅ **FlareSolverr**: Suporte opcional para resolver Cloudflare com sessões reutilizáveis
+- ✅ **FlareSolverr**: Suporte opcional para resolver Cloudflare com sessões reutilizáveis e serialização de requisições paralelas
 - ✅ **Cache Multi-Camadas**: Cache Redis + Cache HTTP local em memória (30s) para máxima performance
 - ✅ **Sistema Cross-Data**: Compartilhamento de dados entre scrapers via Redis (reduz consultas desnecessárias)
 - ✅ **Circuit Breakers**: Proteção contra sobrecarga de serviços externos
@@ -45,13 +45,13 @@ O sistema adiciona automaticamente tags de idioma aos títulos quando detecta in
 - **[Leg]**: Adicionada quando detecta `LEGENDADO`, `LEGENDA` ou `LEG` no `release_title_magnet`, metadata ou HTML da página
 
 ### 🌐 Sites Suportados
-- ✅ ** st❂rçƙ
-- ✅ ** rεdƎ★★
-- ✅ ** bª¡xª–ƒ¡lmεš
-- ✅ ** t–đøs–ƒ¡lmεš♡
-- ✅ ** ¢ømªnd◎–łå (Necessário selecionar o FlareSolverr)
-- ✅ ** błµđv (Necessário selecionar o FlareSolverr)
-- ✅ ** nεrd
+- ✅ **$†@Я©Ҝ**
+- ✅ **Я€Ð€**
+- ✅ **†₣!£₥€**
+- ✅ **₱ØЯ†@£**
+- ✅ **£!₥Ø₦** - Necessário selecionar o FlareSolverr
+- ✅ **©Ø₥@₦ÐØ** - Necessário selecionar o FlareSolverr
+- ✅ **฿£µÐ√** - Necessário selecionar o FlareSolverr
 
 
 ## 🐳 Docker
@@ -169,11 +169,33 @@ Para poder selecionar o FlareSolverr:
 
 1. Edite o indexador no Prowlarr
 2. Selecione o campo **[Usar FlareSolverr]**
-3. No momento, somente 2 sites precisam ser selecionados:
-   - **¢ømªnd◎–łå**
-   - **błµđv–ƒ¡lmεš♡**
+3. No momento, somente 3 sites precisam ser selecionados:
+- ✅ **£!₥Ø₦**
+- ✅ **©Ø₥@₦ÐØ**
+- ✅ **฿£µÐ√**
    
 <img width="652" height="824" alt="image" src="https://github.com/user-attachments/assets/000c4e51-df2e-4b47-86d6-0010f026ef61" />
+
+### FlareSolverr - Gerenciamento de Sessões
+
+O sistema gerencia sessões do FlareSolverr de forma inteligente:
+
+**Com Redis disponível:**
+- Sessões são armazenadas no Redis e compartilhadas entre todas as threads/processos
+- TTL configurável via `FLARESOLVERR_SESSION_TTL` (padrão: 4 horas)
+- Reutilização automática de sessões válidas
+- Invalidação automática quando sessão expira ou fica inválida
+
+**Sem Redis (fallback):**
+- Usa cache compartilhado global em memória (thread-safe)
+- Sessões são compartilhadas entre todas as threads do mesmo processo
+- Mesmo TTL configurável via `FLARESOLVERR_SESSION_TTL`
+- Proteção contra race conditions com locks apropriados
+
+**Proteção em Processamento Paralelo:**
+- Requisições ao FlareSolverr são serializadas por `base_url` usando locks
+- Evita race conditions onde HTML de uma requisição poderia ser retornado para outra
+- Validação de HTML antes de salvar no cache garante que corresponde à URL solicitada
 
 ## 💾 Cache
 
@@ -183,6 +205,8 @@ O sistema usa cache em **três camadas** para HTML das páginas:
 1. **Cache Local (Memória)**: 30 segundos - Primeira camada, mais rápida
 2. **Cache Redis (Curto)**: 10 minutos - Para páginas pequenas (< 500KB)
 3. **Cache Redis (Longo)**: 12 horas - Para páginas grandes (>= 500KB)
+
+**Validação de Cache**: O sistema valida se o HTML retornado corresponde à URL solicitada antes de salvar no cache, evitando problemas de race conditions em processamento paralelo.
 
 ### Cache - Comportamento
 O comportamento varia conforme o tipo de requisição:

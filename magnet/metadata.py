@@ -590,7 +590,7 @@ def fetch_metadata_from_itorrents(info_hash: str, scraper_name: Optional[str] = 
         if scraper_name:
             log_parts.append(f"[{scraper_name}]")
         if title:
-            title_preview = title[:50] if len(title) > 50 else title
+            title_preview = title[:120] if len(title) > 120 else title
             log_parts.append(title_preview)
         # Sempre inclui o hash completo para identificação
         log_parts.append(f"(hash: {info_hash_lower})")

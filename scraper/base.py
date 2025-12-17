@@ -224,56 +224,73 @@ class BaseScraper(ABC):
         
         if use_flaresolverr_for_this_url:
             try:
-                session_id = self.flaresolverr_client.get_or_create_session(
-                    self.base_url,
-                    skip_redis=self._is_test
-                )
-                if session_id:
-                    pass  # Sessão obtida com sucesso
-                else:
-                    logger.warning(f"FlareSolverr: não foi possível obter/criar sessão para {url[:50]}... - tentando requisição direta (pode resultar em 403)")
-                if session_id:
-                    html_content = self.flaresolverr_client.solve(
-                        url,
-                        session_id,
-                        referer if referer else self.base_url,
+                # LOCK: Serializa requisições ao FlareSolverr para evitar race conditions
+                # quando múltiplas threads processam URLs diferentes simultaneamente
+                from utils.http.flaresolverr import _get_flaresolverr_lock
+                flaresolverr_lock = _get_flaresolverr_lock(self.base_url)
+                
+                with flaresolverr_lock:
+                    session_id = self.flaresolverr_client.get_or_create_session(
                         self.base_url,
                         skip_redis=self._is_test
                     )
+                    if session_id:
+                        pass  # Sessão obtida com sucesso
+                    else:
+                        logger.warning(f"FlareSolverr: não foi possível obter/criar sessão para {url[:50]}... - tentando requisição direta (pode resultar em 403)")
+                    if session_id:
+                        html_content = self.flaresolverr_client.solve(
+                            url,
+                            session_id,
+                            referer if referer else self.base_url,
+                            self.base_url,
+                            skip_redis=self._is_test
+                        )
                     if html_content:
-                        logger.debug(f"FlareSolverr: sucesso para {url[:50]}... ({len(html_content)} bytes)")
-                        # Salva no cache local primeiro (mais rápido)
-                        if not self._is_test:
-                            try:
-                                from cache.http_cache import get_http_cache
-                                http_cache = get_http_cache()
-                                http_cache.set(url, html_content)
-                            except:
-                                pass
+                        # VALIDAÇÃO: Verifica se o HTML retornado corresponde à URL solicitada
+                        # Isso evita salvar HTML errado no cache
+                        html_str = html_content.decode('utf-8', errors='ignore') if isinstance(html_content, bytes) else str(html_content)
+                        url_slug = url.rstrip('/').split('/')[-1]
+                        url_in_html = url in html_str or url_slug in html_str
                         
-                        # Salva no Redis
-                        if self.redis and not self._is_test:
-                            try:
-                                short_cache_key = html_short_key(url)
-                                self.redis.setex(
-                                    short_cache_key,
-                                    Config.HTML_CACHE_TTL_SHORT,
-                                    html_content
-                                )
-                                
-                                cache_key = html_long_key(url)
-                                self.redis.setex(
-                                    cache_key,
-                                    Config.HTML_CACHE_TTL_LONG,
-                                    html_content
-                                )
-                            except:
-                                pass
-                        
-                        result = BeautifulSoup(html_content, 'html.parser')
-                        with _url_fetching_lock:
-                            _url_fetching.discard(url)
-                        return result
+                        if not url_in_html:
+                            logger.warning(f"FlareSolverr: HTML retornado não corresponde à URL! URL: {url[:80]}... | HTML size: {len(html_str)} bytes")
+                            # Não salva no cache e não retorna - vai tentar retry ou requisição direta
+                            html_content = None
+                        else:
+                            logger.debug(f"FlareSolverr: sucesso para {url[:50]}... ({len(html_content)} bytes)")
+                            # Salva no cache local primeiro (mais rápido)
+                            if not self._is_test:
+                                try:
+                                    from cache.http_cache import get_http_cache
+                                    http_cache = get_http_cache()
+                                    http_cache.set(url, html_content)
+                                except:
+                                    pass
+                            
+                            # Salva no Redis
+                            if self.redis and not self._is_test:
+                                try:
+                                    short_cache_key = html_short_key(url)
+                                    self.redis.setex(
+                                        short_cache_key,
+                                        Config.HTML_CACHE_TTL_SHORT,
+                                        html_content
+                                    )
+                                    
+                                    cache_key = html_long_key(url)
+                                    self.redis.setex(
+                                        cache_key,
+                                        Config.HTML_CACHE_TTL_LONG,
+                                        html_content
+                                    )
+                                except:
+                                    pass
+                            
+                            result = BeautifulSoup(html_content, 'html.parser')
+                            with _url_fetching_lock:
+                                _url_fetching.discard(url)
+                            return result
                     else:
                         logger.warning(f"FlareSolverr: retornou None para {url[:50]}... - tentando retry ou requisição direta")
                         from cache.redis_keys import flaresolverr_failure_key
@@ -307,6 +324,7 @@ class BaseScraper(ABC):
                             should_retry = False
                         
                         if should_retry:
+                            # Retry ainda está dentro do lock, então continua usando o mesmo lock
                             # Tenta obter/criar sessão (pode retornar a mesma se não foi invalidada)
                             logger.debug(f"FlareSolverr: None retornado - tentando obter/criar sessão")
                             new_session_id = self.flaresolverr_client.get_or_create_session(
@@ -328,39 +346,48 @@ class BaseScraper(ABC):
                                     skip_redis=self._is_test
                                 )
                                 if html_content:
-                                    # Salva no cache local primeiro
-                                    if not self._is_test:
-                                        try:
-                                            from cache.http_cache import get_http_cache
-                                            http_cache = get_http_cache()
-                                            http_cache.set(url, html_content)
-                                        except:
-                                            pass
+                                    # VALIDAÇÃO: Verifica se o HTML retornado corresponde à URL solicitada
+                                    html_str = html_content.decode('utf-8', errors='ignore') if isinstance(html_content, bytes) else str(html_content)
+                                    url_slug = url.rstrip('/').split('/')[-1]
+                                    url_in_html = url in html_str or url_slug in html_str
                                     
-                                    # Salva no Redis
-                                    if self.redis and not self._is_test:
-                                        try:
-                                            self.redis.delete(failure_key)
-                                            short_cache_key = html_short_key(url)
-                                            self.redis.setex(
-                                                short_cache_key,
-                                                Config.HTML_CACHE_TTL_SHORT,
-                                                html_content
-                                            )
-                                            
-                                            cache_key = html_long_key(url)
-                                            self.redis.setex(
-                                                cache_key,
-                                                Config.HTML_CACHE_TTL_LONG,
-                                                html_content
-                                            )
-                                        except:
-                                            pass
-                                    
-                                    result = BeautifulSoup(html_content, 'html.parser')
-                                    with _url_fetching_lock:
-                                        _url_fetching.discard(url)
-                                    return result
+                                    if not url_in_html:
+                                        logger.warning(f"FlareSolverr retry: HTML retornado não corresponde à URL! URL: {url[:80]}... | HTML size: {len(html_str)} bytes")
+                                        html_content = None
+                                    else:
+                                        # Salva no cache local primeiro
+                                        if not self._is_test:
+                                            try:
+                                                from cache.http_cache import get_http_cache
+                                                http_cache = get_http_cache()
+                                                http_cache.set(url, html_content)
+                                            except:
+                                                pass
+                                        
+                                        # Salva no Redis
+                                        if self.redis and not self._is_test:
+                                            try:
+                                                self.redis.delete(failure_key)
+                                                short_cache_key = html_short_key(url)
+                                                self.redis.setex(
+                                                    short_cache_key,
+                                                    Config.HTML_CACHE_TTL_SHORT,
+                                                    html_content
+                                                )
+                                                
+                                                cache_key = html_long_key(url)
+                                                self.redis.setex(
+                                                    cache_key,
+                                                    Config.HTML_CACHE_TTL_LONG,
+                                                    html_content
+                                                )
+                                            except:
+                                                pass
+                                        
+                                        result = BeautifulSoup(html_content, 'html.parser')
+                                        with _url_fetching_lock:
+                                            _url_fetching.discard(url)
+                                        return result
                                 else:
                                     # Tenta Redis primeiro
                                     if self.redis and not self._is_test:
@@ -401,53 +428,68 @@ class BaseScraper(ABC):
             # Se o cache de falha expirou, tenta novamente com FlareSolverr
             if should_try_flaresolverr and self.flaresolverr_client:
                 try:
-                    logger.debug(f"FlareSolverr: cache de falha expirado - tentando novamente para {url[:50]}...")
-                    session_id = self.flaresolverr_client.get_or_create_session(
-                        self.base_url,
-                        skip_redis=self._is_test
-                    )
-                    if session_id:
-                        html_content = self.flaresolverr_client.solve(
-                            url,
-                            session_id,
-                            referer if referer else self.base_url,
+                    # LOCK: Serializa requisições ao FlareSolverr para evitar race conditions
+                    # IMPORTANTE: Mesmo no retry, usa o lock para garantir serialização
+                    from utils.http.flaresolverr import _get_flaresolverr_lock
+                    flaresolverr_lock = _get_flaresolverr_lock(self.base_url)
+                    
+                    with flaresolverr_lock:
+                        logger.debug(f"FlareSolverr: cache de falha expirado - tentando novamente para {url[:50]}...")
+                        session_id = self.flaresolverr_client.get_or_create_session(
                             self.base_url,
                             skip_redis=self._is_test
                         )
+                        if session_id:
+                            html_content = self.flaresolverr_client.solve(
+                                url,
+                                session_id,
+                                referer if referer else self.base_url,
+                                self.base_url,
+                                skip_redis=self._is_test
+                            )
                         if html_content:
-                            # Salva no cache local primeiro
-                            if not self._is_test:
-                                try:
-                                    from cache.http_cache import get_http_cache
-                                    http_cache = get_http_cache()
-                                    http_cache.set(url, html_content)
-                                except:
-                                    pass
+                            # VALIDAÇÃO: Verifica se o HTML retornado corresponde à URL solicitada
+                            html_str = html_content.decode('utf-8', errors='ignore') if isinstance(html_content, bytes) else str(html_content)
+                            url_slug = url.rstrip('/').split('/')[-1]
+                            url_in_html = url in html_str or url_slug in html_str
                             
-                            # Salva no Redis e remove cache de falha
-                            if self.redis and not self._is_test:
-                                try:
-                                    self.redis.delete(failure_key)
-                                    short_cache_key = html_short_key(url)
-                                    self.redis.setex(
-                                        short_cache_key,
-                                        Config.HTML_CACHE_TTL_SHORT,
-                                        html_content
-                                    )
-                                    
-                                    cache_key = html_long_key(url)
-                                    self.redis.setex(
-                                        cache_key,
-                                        Config.HTML_CACHE_TTL_LONG,
-                                        html_content
-                                    )
-                                except:
-                                    pass
-                            
-                            result = BeautifulSoup(html_content, 'html.parser')
-                            with _url_fetching_lock:
-                                _url_fetching.discard(url)
-                            return result
+                            if not url_in_html:
+                                logger.warning(f"FlareSolverr retry (cache expirado): HTML retornado não corresponde à URL! URL: {url[:80]}... | HTML size: {len(html_str)} bytes")
+                                html_content = None
+                            else:
+                                # Salva no cache local primeiro
+                                if not self._is_test:
+                                    try:
+                                        from cache.http_cache import get_http_cache
+                                        http_cache = get_http_cache()
+                                        http_cache.set(url, html_content)
+                                    except:
+                                        pass
+                                
+                                # Salva no Redis e remove cache de falha
+                                if self.redis and not self._is_test:
+                                    try:
+                                        self.redis.delete(failure_key)
+                                        short_cache_key = html_short_key(url)
+                                        self.redis.setex(
+                                            short_cache_key,
+                                            Config.HTML_CACHE_TTL_SHORT,
+                                            html_content
+                                        )
+                                        
+                                        cache_key = html_long_key(url)
+                                        self.redis.setex(
+                                            cache_key,
+                                            Config.HTML_CACHE_TTL_LONG,
+                                            html_content
+                                        )
+                                    except:
+                                        pass
+                                
+                                result = BeautifulSoup(html_content, 'html.parser')
+                                with _url_fetching_lock:
+                                    _url_fetching.discard(url)
+                                return result
                         else:
                             # Marca como falha novamente
                             if self.redis and not self._is_test:
@@ -603,7 +645,8 @@ class BaseScraper(ABC):
                 links,
                 self._get_torrents_from_page,
                 None,  # Sem limite de torrents - processa todos os links limitados
-                scraper_name=self.SCRAPER_TYPE if hasattr(self, 'SCRAPER_TYPE') else None
+                scraper_name=self.SCRAPER_TYPE if hasattr(self, 'SCRAPER_TYPE') else None,
+                use_flaresolverr=self.use_flaresolverr
             )
             
             enriched = self.enrich_torrents(
@@ -1074,7 +1117,7 @@ class BaseScraper(ABC):
                 log_parts.append(f"[{scraper_name}]")
             title = torrent.get('title', '')
             if title:
-                title_preview = title[:50] if len(title) > 50 else title
+                title_preview = title[:120] if len(title) > 120 else title
                 log_parts.append(title_preview)
             log_parts.append(f"(hash: {info_hash})")
             log_id = " ".join(log_parts) if log_parts else f"hash: {info_hash}"
@@ -1162,7 +1205,7 @@ class BaseScraper(ABC):
                 log_parts.append(f"[{scraper_name}]")
             title = torrent.get('title', '')
             if title:
-                title_preview = title[:50] if len(title) > 50 else title
+                title_preview = title[:120] if len(title) > 120 else title
                 log_parts.append(title_preview)
             log_parts.append(f"(hash: {info_hash})")
             log_id = " ".join(log_parts) if log_parts else f"hash: {info_hash}"

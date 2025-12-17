@@ -40,7 +40,7 @@ class Config:
         os.getenv('HTML_CACHE_TTL_LONG', '12h')
     )
     FLARESOLVERR_SESSION_TTL: int = _parse_duration(
-        os.getenv('FLARESOLVERR_SESSION_TTL', '4h')
+        os.getenv('FLARESOLVERR_SESSION_TTL', '8h')
     )
     
     # Logging

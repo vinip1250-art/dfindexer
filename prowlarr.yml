@@ -46,7 +46,7 @@ search:
       response:
         type: json
   inputs:
-    filter_results: "true"
+    filter_results: "false"
     use_flaresolverr: "{{ .Config.use_flaresolverr }}"
     q: "{{ .Keywords }}"
   keywordsfilters:

@@ -370,7 +370,7 @@ async def fetch_metadata_from_itorrents_async(
         if scraper_name:
             log_parts.append(f"[{scraper_name}]")
         if title:
-            title_preview = title[:50] if len(title) > 50 else title
+            title_preview = title[:120] if len(title) > 120 else title
             log_parts.append(title_preview)
         if not log_parts:
             log_parts.append(info_hash_lower[:16])

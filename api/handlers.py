@@ -156,9 +156,29 @@ def indexer_handler(site_name: str = None):
                     torrents, filter_stats = _indexer_service.get_page(normalized_type, page, use_flaresolverr, is_prowlarr_test, max_results=max_results)
             
             if filter_stats:
-                logger.info(f"{log_prefix} [Filtro Aplicado] Total: {filter_stats['total']} | Filtrados: {filter_stats['filtered']} | Aprovados: {filter_stats['approved']}")
+                # Conta hashes únicos (ignora duplicados do mesmo scraper)
+                unique_hashes = set()
+                for torrent in torrents:
+                    info_hash = torrent.get('info_hash', '')
+                    if info_hash:
+                        unique_hashes.add(info_hash.lower())
+                
+                total_unique = len(unique_hashes)
+                
+                # Log mostra apenas únicos (sem duplicados internos)
+                logger.info(f"{log_prefix} [Filtro Aplicado] Total: {total_unique} | Filtrados: {filter_stats['filtered']} | Aprovados: {total_unique}")
             else:
-                logger.info(f"{log_prefix} [Filtro Aplicado] Total: {len(torrents)} | Filtrados: 0 | Aprovados: {len(torrents)}")
+                # Conta hashes únicos (ignora duplicados do mesmo scraper)
+                unique_hashes = set()
+                for torrent in torrents:
+                    info_hash = torrent.get('info_hash', '')
+                    if info_hash:
+                        unique_hashes.add(info_hash.lower())
+                
+                total_unique = len(unique_hashes)
+                
+                # Log mostra apenas únicos (sem duplicados internos)
+                logger.info(f"{log_prefix} [Filtro Aplicado] Total: {total_unique} | Filtrados: 0 | Aprovados: {total_unique}")
         else:
             # Busca em TODOS os scrapers quando não especificado
             log_prefix = "[TODOS]"
@@ -193,30 +213,30 @@ def indexer_handler(site_name: str = None):
                         all_torrents.extend(scraper_torrents)
                         if scraper_stats:
                             all_filter_stats.append(scraper_stats)
-                            # Log individual por scraper para debug
-                            logger.info(f"{log_prefix} [{scraper_label}] [Filtro] Total: {scraper_stats.get('total', 0)} | Filtrados: {scraper_stats.get('filtered', 0)} | Aprovados: {scraper_stats.get('approved', 0)}")
+                            
+                            # Conta hashes únicos neste scraper (ignora duplicados do mesmo scraper)
+                            unique_hashes_in_scraper = set()
+                            for torrent in scraper_torrents:
+                                info_hash = torrent.get('info_hash', '')
+                                if info_hash:
+                                    unique_hashes_in_scraper.add(info_hash.lower())
+                            
+                            total_unique = len(unique_hashes_in_scraper)
+                            
+                            # Log individual por scraper - mostra apenas únicos (sem duplicados internos)
+                            logger.info(f"{log_prefix} [{scraper_label}] [Filtro] Total: {total_unique} | Filtrados: {scraper_stats.get('filtered', 0)} | Aprovados: {total_unique}")
                         logger.info(f"{log_prefix} [{scraper_label}] Encontrados: {len(scraper_torrents)} resultados")
                 except Exception as e:
                     logger.warning(f"{log_prefix} Erro ao buscar em [{scraper_type}]: {e}")
                     continue
             
-            # Remove duplicados baseado em info_hash
-            seen_hashes = set()
-            unique_torrents = []
-            for torrent in all_torrents:
-                info_hash = (torrent.get('info_hash') or '').lower()
-                if info_hash and len(info_hash) == 40:
-                    if info_hash in seen_hashes:
-                        continue
-                    seen_hashes.add(info_hash)
-                unique_torrents.append(torrent)
-            
+            # Não remove duplicados - mantém todos os magnets encontrados
             # Ordena por data (mais recente primeiro)
             from core.processors.torrent_processor import TorrentProcessor
             processor = TorrentProcessor()
-            processor.sort_by_date(unique_torrents)
+            processor.sort_by_date(all_torrents)
             
-            torrents = unique_torrents
+            torrents = all_torrents
             
             # Combina estatísticas de todos os scrapers
             if all_filter_stats:

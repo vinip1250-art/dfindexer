@@ -475,7 +475,7 @@ class TorrentEnricherAsync:
                 log_parts.append(f"[{scraper_name}]")
             title = torrent.get('title', '')
             if title:
-                title_preview = title[:50] if len(title) > 50 else title
+                title_preview = title[:120] if len(title) > 120 else title
                 log_parts.append(title_preview)
             log_parts.append(f"(hash: {info_hash})")
             log_id = " ".join(log_parts) if log_parts else f"hash: {info_hash}"
@@ -549,7 +549,7 @@ class TorrentEnricherAsync:
                         log_parts.append(f"[{scraper_name}]")
                     title = torrent.get('title', '')
                     if title:
-                        title_preview = title[:50] if len(title) > 50 else title
+                        title_preview = title[:120] if len(title) > 120 else title
                         log_parts.append(title_preview)
                     log_parts.append(f"(hash: {info_hash})")
                     log_id = " ".join(log_parts) if log_parts else f"hash: {info_hash}"

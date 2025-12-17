@@ -839,17 +839,7 @@
                 const resultsArray = await Promise.all(promises);
                 allResults = resultsArray.flat();
                 
-                // Remove duplicados por info_hash
-                const seenHashes = new Set();
-                allResults = allResults.filter(torrent => {
-                    const hash = (torrent.info_hash || '').toLowerCase();
-                    if (hash && hash.length === 40) {
-                        if (seenHashes.has(hash)) return false;
-                        seenHashes.add(hash);
-                    }
-                    return true;
-                });
-                
+                // Não remove duplicados - mantém todos os magnets encontrados
                 // Ordena por data (mais recente primeiro)
                 allResults.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
                 renderResults(allResults);

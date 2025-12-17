@@ -147,7 +147,8 @@ class TfilmeScraper(BaseScraper):
                 links,
                 self._get_torrents_from_page,
                 None,  # Sem limite de torrents - processa todos os links limitados
-                scraper_name=self.SCRAPER_TYPE if hasattr(self, 'SCRAPER_TYPE') else None
+                scraper_name=self.SCRAPER_TYPE if hasattr(self, 'SCRAPER_TYPE') else None,
+                use_flaresolverr=self.use_flaresolverr
             )
             
             # Enriquece torrents (usa flags preparadas pelo BaseScraper)

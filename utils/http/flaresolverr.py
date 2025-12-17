@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 # Cache em memória por requisição (apenas quando Redis não está disponível)
 _request_cache = threading.local()
 
+# Cache compartilhado global para sessões quando Redis não está disponível
+# Estrutura: {base_url: (session_id, expire_at)}
+_shared_sessions_cache = {}
+_shared_sessions_lock = threading.Lock()
+
 # Controle global de sessões FlareSolverr simultâneas
 _session_creation_lock = threading.Lock()
 _active_sessions_count = 0
@@ -35,6 +40,19 @@ def _get_session_creation_lock(base_url: str) -> threading.Lock:
         if base_url not in _session_creation_locks:
             _session_creation_locks[base_url] = threading.Lock()
         return _session_creation_locks[base_url]
+
+# Lock global para serializar requisições ao FlareSolverr (evita race conditions em processamento paralelo)
+# Uma requisição por vez por base_url para garantir que o HTML retornado corresponde à URL solicitada
+_flaresolverr_request_locks = {}
+_flaresolverr_request_locks_lock = threading.Lock()
+
+def _get_flaresolverr_lock(base_url: str) -> threading.Lock:
+    """Obtém um lock específico para serializar requisições ao FlareSolverr de uma base_url"""
+    global _flaresolverr_request_locks
+    with _flaresolverr_request_locks_lock:
+        if base_url not in _flaresolverr_request_locks:
+            _flaresolverr_request_locks[base_url] = threading.Lock()
+        return _flaresolverr_request_locks[base_url]
 
 # Cache para evitar logs duplicados consecutivos
 _last_log_cache = {}
@@ -331,18 +349,26 @@ class FlareSolverrClient:
             return None
         
         # Usa memória apenas se Redis não está disponível desde o início
+        # IMPORTANTE: Usa cache compartilhado global (não threading.local) para permitir
+        # reutilização de sessões entre threads quando Redis não está disponível
         if not self.redis or skip_redis:
-            if not hasattr(_request_cache, 'flaresolverr_sessions'):
-                _request_cache.flaresolverr_sessions = {}
-            
-            # Verifica cache em memória
-            if base_url in _request_cache.flaresolverr_sessions:
-                session_id, expire_at = _request_cache.flaresolverr_sessions[base_url]
-                if time.time() < expire_at and self._validate_session(session_id):
-                    return session_id
-                else:
-                    # Expirou ou inválida, remove
-                    del _request_cache.flaresolverr_sessions[base_url]
+            # Verifica cache compartilhado global (thread-safe)
+            with _shared_sessions_lock:
+                if base_url in _shared_sessions_cache:
+                    session_id, expire_at = _shared_sessions_cache[base_url]
+                    if time.time() < expire_at:
+                        # Valida sessão antes de retornar (fora do lock para não bloquear)
+                        if self._validate_session(session_id):
+                            logger.debug(f"FlareSolverr: sessão encontrada no cache compartilhado para {base_url} (ID: {session_id[:20]}...)")
+                            return session_id
+                        else:
+                            # Sessão inválida, remove do cache
+                            logger.debug(f"FlareSolverr: sessão inválida no cache compartilhado, removendo para {base_url}")
+                            del _shared_sessions_cache[base_url]
+                    else:
+                        # Expirou, remove
+                        logger.debug(f"FlareSolverr: sessão expirada no cache compartilhado para {base_url}")
+                        del _shared_sessions_cache[base_url]
         
         # Protege criação de sessão com lock por base_url (evita múltiplas threads criando simultaneamente)
         creation_lock = _get_session_creation_lock(base_url)
@@ -363,12 +389,14 @@ class FlareSolverrClient:
         # Cria nova sessão (respeitando limite global)
         session_id = self._create_session(base_url, skip_redis)
         
-        # Salva em memória se Redis não disponível
+        # Salva em cache compartilhado global se Redis não disponível
+        # IMPORTANTE: Usa cache compartilhado (não threading.local) para permitir
+        # reutilização de sessões entre threads
         if (not self.redis or skip_redis) and session_id:
-            if not hasattr(_request_cache, 'flaresolverr_sessions'):
-                _request_cache.flaresolverr_sessions = {}
-            expire_at = time.time() + Config.FLARESOLVERR_SESSION_TTL
-            _request_cache.flaresolverr_sessions[base_url] = (session_id, expire_at)
+            with _shared_sessions_lock:
+                expire_at = time.time() + Config.FLARESOLVERR_SESSION_TTL
+                _shared_sessions_cache[base_url] = (session_id, expire_at)
+                logger.debug(f"FlareSolverr: sessão salva no cache compartilhado para {base_url} (ID: {session_id[:20]}..., expira em {Config.FLARESOLVERR_SESSION_TTL}s)")
         
         return session_id
     
@@ -490,12 +518,13 @@ class FlareSolverrClient:
                     logger.debug(f"FlareSolverr: erro ao invalidar sessão no Redis: {type(e).__name__}")
                     pass
             
-            # Remove da memória
-            if hasattr(_request_cache, 'flaresolverr_sessions'):
-                if base_url in _request_cache.flaresolverr_sessions:
-                    cached_session_id, _ = _request_cache.flaresolverr_sessions[base_url]
+            # Remove do cache compartilhado global (thread-safe)
+            with _shared_sessions_lock:
+                if base_url in _shared_sessions_cache:
+                    cached_session_id, _ = _shared_sessions_cache[base_url]
                     if cached_session_id == session_id:
-                        _request_cache.flaresolverr_sessions.pop(base_url, None)
+                        _shared_sessions_cache.pop(base_url, None)
+                        logger.debug(f"FlareSolverr: sessão removida do cache compartilhado para {base_url}")
         
         # Decrementa contador de sessões ativas
         self._decrement_session_count()

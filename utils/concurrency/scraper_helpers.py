@@ -82,14 +82,16 @@ def build_page_url(base_url: str, page_pattern: str, page: str) -> str:
     return f"{base_url}{page_pattern.format(page)}"
 
 
-# Processa links em paralelo mantendo a ordem original para máxima performance
+# Processa links mantendo a ordem original
+# IMPORTANTE: Quando use_flaresolverr=True, processa SEQUENCIALMENTE para evitar race conditions
 def process_links_parallel(
     links: List[str],
     process_func: Callable[[str], List[Dict]],
     effective_max: Optional[int],
     max_workers: Optional[int] = None,
     timeout: int = DEFAULT_PAGE_TIMEOUT,
-    scraper_name: Optional[str] = None
+    scraper_name: Optional[str] = None,
+    use_flaresolverr: bool = False
 ) -> List[Dict]:
     # Remove duplicatas mantendo a ordem original
     seen = set()
@@ -110,59 +112,67 @@ def process_links_parallel(
     if not links:
         return []
     
-    # Obtém max_workers da configuração se não fornecido
-    if max_workers is None:
-        try:
-            from app.config import Config
-            max_workers = Config.SCRAPER_MAX_WORKERS if hasattr(Config, 'SCRAPER_MAX_WORKERS') else DEFAULT_MAX_WORKERS
-        except Exception:
-            max_workers = DEFAULT_MAX_WORKERS
-    
     # Salva a ordem original dos links (índice -> link)
-    original_order = list(links)  # Cópia da lista original na ordem correta
+    original_order = list(links)
     total_links = len(original_order)
     
     # Prefixo do scraper para logs
     scraper_prefix = f"[{scraper_name}] " if scraper_name else ""
     
-    # Log da ordem original dos links (DEBUG) - índices começam do 1
-    logger.debug(f"{scraper_prefix}Processando {total_links} links em paralelo. Ordem original:")
-    for idx, link in enumerate(original_order):
-        link_short = link.split('/')[-2] if '/' in link else link[-50:]
-        logger.debug(f"{scraper_prefix}[{idx+1}] {link_short}")
-    
-    # Cria mapeamento de link -> índice original para manter ordem
-    link_to_index = {link: idx for idx, link in enumerate(original_order)}
-    
-    # Dicionário para armazenar resultados por índice (para reordenar depois)
+    # Dicionário para armazenar resultados por índice
     results_by_index: Dict[int, List[Dict]] = {}
     
-    # SEMPRE paraleliza (mesmo com 1 link) - overhead mínimo, consistência máxima
-    # Ajusta workers baseado na quantidade de links (mínimo 1, máximo max_workers)
-    actual_max_workers = min(max(1, total_links), max_workers)
-    
-    with ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
-        # Submete todas as tarefas
-        future_to_link = {
-            executor.submit(process_func, link): link
-            for link in original_order
-        }
-        
-        # Processa todos os links (não para por limite de torrents - limite já foi aplicado nos links)
-        for future in as_completed(future_to_link):
-            link = future_to_link[future]
-            original_index = link_to_index[link]
-            
+    # QUANDO FLARESOLVERR ESTÁ HABILITADO: Processa SEQUENCIALMENTE
+    # Isso evita race conditions onde o FlareSolverr pode retornar HTML de outra página
+    if use_flaresolverr:
+        logger.debug(f"{scraper_prefix}Processando {total_links} links SEQUENCIALMENTE (FlareSolverr ativo)")
+        for idx, link in enumerate(original_order):
+            link_short = link.split('/')[-2] if '/' in link else link[-50:]
+            logger.debug(f"{scraper_prefix}[{idx+1}/{total_links}] {link_short}")
             try:
-                torrents = future.result(timeout=timeout)
-                results_by_index[original_index] = torrents
+                torrents = process_func(link)
+                results_by_index[idx] = torrents
             except Exception as e:
                 error_type = type(e).__name__
                 error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
-                link_preview = link[:50] if link else 'N/A'
-                logger.warning(f"{scraper_prefix}Page error [{original_index+1}]: {error_type} - {error_msg} (link: {link_preview}...)")
-                # Armazena lista vazia para manter ordem mesmo em caso de erro
-                results_by_index[original_index] = []
+                logger.warning(f"{scraper_prefix}Page error [{idx+1}]: {error_type} - {error_msg}")
+                results_by_index[idx] = []
+    else:
+        # Processamento PARALELO (sem FlareSolverr)
+        if max_workers is None:
+            try:
+                from app.config import Config
+                max_workers = Config.SCRAPER_MAX_WORKERS if hasattr(Config, 'SCRAPER_MAX_WORKERS') else DEFAULT_MAX_WORKERS
+            except Exception:
+                max_workers = DEFAULT_MAX_WORKERS
+        
+        logger.debug(f"{scraper_prefix}Processando {total_links} links em PARALELO")
+        for idx, link in enumerate(original_order):
+            link_short = link.split('/')[-2] if '/' in link else link[-50:]
+            logger.debug(f"{scraper_prefix}[{idx+1}] {link_short}")
+        
+        link_to_index = {link: idx for idx, link in enumerate(original_order)}
+        actual_max_workers = min(max(1, total_links), max_workers)
+        
+        with ThreadPoolExecutor(max_workers=actual_max_workers) as executor:
+            future_to_link = {
+                executor.submit(process_func, link): link
+                for link in original_order
+            }
+            
+            for future in as_completed(future_to_link):
+                link = future_to_link[future]
+                original_index = link_to_index[link]
+                
+                try:
+                    torrents = future.result(timeout=timeout)
+                    results_by_index[original_index] = torrents
+                except Exception as e:
+                    error_type = type(e).__name__
+                    error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
+                    link_preview = link[:50] if link else 'N/A'
+                    logger.warning(f"{scraper_prefix}Page error [{original_index+1}]: {error_type} - {error_msg} (link: {link_preview}...)")
+                    results_by_index[original_index] = []
     
     # Reordena resultados pela ordem original dos links (garante ordem correta)
     all_torrents = []
