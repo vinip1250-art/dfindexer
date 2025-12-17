@@ -674,6 +674,7 @@ class BaseScraper(ABC):
         from utils.text.constants import STOP_WORDS
         
         links = []
+        seen_urls = set()  # Para evitar duplicatas entre variações
         variations = [query]
         
         # Remove stop words
@@ -698,7 +699,10 @@ class BaseScraper(ABC):
             page_links = self._extract_search_results(doc)
             for href in page_links:
                 absolute_url = urljoin(self.base_url, href)
-                links.append(absolute_url)
+                # Verifica duplicatas antes de adicionar
+                if absolute_url not in seen_urls:
+                    links.append(absolute_url)
+                    seen_urls.add(absolute_url)
         
         return links
     
