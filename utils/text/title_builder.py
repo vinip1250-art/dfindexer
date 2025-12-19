@@ -71,11 +71,17 @@ def prepare_release_title(
         temp_normalized = re.sub(r'\s+', '.', normalized.strip())
         temp_normalized = re.sub(r'\.{2,}', '.', temp_normalized)
         
-        # Remove duplicações consecutivas de qualquer parte
         parts = temp_normalized.split('.')
+        combined_parts = []
+        for part in parts:
+            clean_part = part.strip()
+            if clean_part:
+                combined_parts.append(clean_part)
+        
+        # Remove duplicações consecutivas de qualquer parte
         cleaned_parts = []
         prev_part = None
-        for part in parts:
+        for part in combined_parts:
             part = part.strip()
             if not part:
                 continue
@@ -101,10 +107,47 @@ def prepare_release_title(
                 if not skip_metadata:
                     metadata_name = get_metadata_name(info_hash, skip_metadata=skip_metadata)
                     if metadata_name and len(metadata_name.strip()) >= 3:
-                        # Metadata encontrado: usa metadata como original_release_title
-                        # NOTA: Se metadata contém DUAL/DUBLADO/LEGENDADO, eles serão removidos do título final
-                        # em add_audio_tag_if_needed() quando as tags [Brazilian], [Eng] ou [Leg] forem adicionadas
-                        original_release_title = metadata_name.strip()
+                        # Metadata encontrado: normaliza e usa como original_release_title
+                        # IMPORTANTE: Preserva FULLHD do metadata
+                        normalized_metadata = metadata_name.strip()
+                        normalized_metadata = html.unescape(normalized_metadata)
+                        try:
+                            normalized_metadata = unquote(normalized_metadata)
+                        except Exception:
+                            pass
+                        normalized_metadata = normalized_metadata.strip()
+                        
+                        # Remove domínios e tags comuns
+                        from utils.text.cleaning import clean_title
+                        normalized_metadata = clean_title(normalized_metadata)
+                        
+                        # Remove tags entre colchetes (ex: [EA], [rich_jc], etc.)
+                        normalized_metadata = re.sub(r'\[[^\]]*\]', '', normalized_metadata)
+                        
+                        # Remove parênteses mas preserva o conteúdo dentro deles (normaliza espaços para pontos)
+                        normalized_metadata = re.sub(r'\(([^)]+)\)', lambda m: m.group(1).replace(' ', '.'), normalized_metadata)
+                        
+                        # Normaliza espaços para pontos para facilitar detecção de duplicações
+                        temp_normalized = re.sub(r'\s+', '.', normalized_metadata.strip())
+                        temp_normalized = re.sub(r'\.{2,}', '.', temp_normalized)
+                        
+                        # Remove duplicações consecutivas de qualquer parte
+                        parts = temp_normalized.split('.')
+                        cleaned_parts = []
+                        prev_part = None
+                        for part in parts:
+                            part = part.strip()
+                            if not part:
+                                continue
+                            # Compara ignorando case e normalizando
+                            part_lower = part.lower()
+                            prev_lower = prev_part.lower() if prev_part else None
+                            # Só adiciona se não for duplicação consecutiva
+                            if part_lower != prev_lower:
+                                cleaned_parts.append(part)
+                                prev_part = part
+                        
+                        original_release_title = '.'.join(cleaned_parts).strip('.')
                         final_missing_dn = False  # Encontrou metadata, não está mais missing
                         # → Ir para etapa 5
                     else:
@@ -170,12 +213,12 @@ def prepare_release_title(
 
 
 # Constrói o título padronizado final (Title.SxxEyy.Year….)
-def create_standardized_title(title_original_html: str, year: str, magnet_processed: str, title_translated_html: Optional[str] = None, magnet_original_magnet: Optional[str] = None) -> str:
+def create_standardized_title(title_original_html: str, year: str, magnet_processed: str, title_translated_html: Optional[str] = None, magnet_original: Optional[str] = None) -> str:
     
     def finalize_title(value: str) -> str:
-        # Usa magnet_original_magnet se disponível (preserva informação original como "1ª Temporada")
+        # Usa magnet_original se disponível (preserva informação original como "1ª Temporada")
         # Senão usa magnet_processed (já processado)
-        release_for_season_detection = magnet_original_magnet if magnet_original_magnet else magnet_processed
+        release_for_season_detection = magnet_original if magnet_original else magnet_processed
         value = _apply_season_temporada_tags(value, release_for_season_detection, title_original_html, year)
         value = _reorder_title_components(value)
         return _ensure_default_format(value)
@@ -207,8 +250,8 @@ def create_standardized_title(title_original_html: str, year: str, magnet_proces
         else:
             # Fallback1: Title Não-latinos Ex:Russo/Koreano
             # Verifica se magnet_processed (raw) também tem caracteres não-latinos
-            # Usa magnet_original_magnet se disponível, senão usa magnet_processed
-            raw_to_check = magnet_original_magnet if magnet_original_magnet else magnet_processed
+            # Usa magnet_original se disponível, senão usa magnet_processed
+            raw_to_check = magnet_original if magnet_original else magnet_processed
             release_has_non_latin = bool(re.search(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\u0400-\u04ff\u0e00-\u0e7f\u0900-\u09ff\u0600-\u06ff\u0590-\u05ff\u0370-\u03ff\u0c00-\u0c7f\u0b80-\u0bff\u0c80-\u0cff\u0d00-\u0d7f\u0a80-\u0aff\u0b00-\u0b7f]', raw_to_check or ''))
             
             # Se title_translated_html existe, usa ele (é preferível ao magnet_processed quando original tem não-latinos)
@@ -237,12 +280,12 @@ def create_standardized_title(title_original_html: str, year: str, magnet_proces
         return result
     
     # Processa magnet_processed para extrair apenas informações técnicas (SxxExx, Sx, ano, qualidade, codec, etc.)
-    # IMPORTANTE: Se magnet_original_magnet está disponível e tem pontos, usa ele diretamente
+    # IMPORTANTE: Se magnet_original está disponível e tem pontos, usa ele diretamente
     # Isso preserva a estrutura original do título do magnet/Redis
-    # Prefere magnet_original_magnet quando disponível porque preserva a estrutura original
-    if magnet_original_magnet and magnet_original_magnet.strip():
-        # Usa magnet_original_magnet se disponível (vem do magnet/Redis com estrutura preservada)
-        clean_release = clean_title(magnet_original_magnet)
+    # Prefere magnet_original quando disponível porque preserva a estrutura original
+    if magnet_original and magnet_original.strip():
+        # Usa magnet_original se disponível (vem do magnet/Redis com estrutura preservada)
+        clean_release = clean_title(magnet_original)
     elif magnet_processed and magnet_processed.strip():
         # Usa magnet_processed (resultado de prepare_release_title) como fallback
         clean_release = clean_title(magnet_processed)
@@ -519,6 +562,7 @@ def create_standardized_title(title_original_html: str, year: str, magnet_proces
     
     # Extrai apenas informações técnicas do magnet_processed, removendo qualquer título
     # Padrões técnicos: Sx, anos, qualidades, codecs, etc.
+    
     technical_parts = []
     parts = clean_release.split('.')
     
@@ -534,8 +578,8 @@ def create_standardized_title(title_original_html: str, year: str, magnet_proces
         # - Anos: 2025, 2024, etc.
         elif re.match(r'^(19|20)\d{2}$', part_clean):
             technical_parts.append(part_clean)
-        # - Qualidades: 1080p, 720p, 2160p, 4K, HD, FHD, UHD, etc.
-        elif re.match(r'^(1080p|720p|480p|2160p|4K|HD|FHD|UHD|SD|HDR)$', part_clean, re.IGNORECASE):
+        # - Qualidades: 1080p, 720p, 2160p, 4K, HD, FHD, UHD, FULLHD, etc.
+        elif re.match(r'^(1080p|720p|480p|2160p|4K|HD|FHD|UHD|SD|HDR|FULLHD)$', part_clean, re.IGNORECASE):
             technical_parts.append(part_clean)
         # - Codecs: x264, x265, H.264, H.265, etc.
         elif re.match(r'^(x264|x265|H\.264|H\.265|AVC|HEVC)$', part_clean, re.IGNORECASE):

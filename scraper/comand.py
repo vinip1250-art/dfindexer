@@ -87,8 +87,8 @@ class ComandScraper(BaseScraper):
     
     # Obtém torrents de uma página específica
     # Obtém torrents de uma página específica
-    def get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
-        return self._default_get_page(page, max_items)
+    def get_page(self, page: str = '1', max_items: Optional[int] = None, is_test: bool = False) -> List[Dict]:
+        return self._default_get_page(page, max_items, is_test=is_test)
     
     # Extrai links dos resultados de busca (usa implementação base de _search_variations)
     def _extract_search_results(self, doc: BeautifulSoup) -> List[str]:
@@ -721,7 +721,7 @@ class ComandScraper(BaseScraper):
                 )
                 
                 standardized_title = create_standardized_title(
-                    original_title, year, original_release_title, title_translated_html=title_translated_processed if title_translated_processed else None, magnet_original_magnet=magnet_original
+                    original_title, year, original_release_title, title_translated_html=title_translated_processed if title_translated_processed else None, magnet_original=magnet_original
                 )
                 
                 # Adiciona [Brazilian] se detectar DUAL/DUBLADO/NACIONAL, [Eng] se LEGENDADO, [Jap] se JAPONÊS, ou ambos se houver os dois
@@ -759,7 +759,7 @@ class ComandScraper(BaseScraper):
                     has_legenda = determine_legend_presence(
                         legend_info_from_html=legend_info,
                         audio_html_content=audio_html_content,
-                        release_title_magnet=original_release_title,
+                        magnet_processed=original_release_title,
                         info_hash=info_hash,
                         skip_metadata=self._skip_metadata
                     )
@@ -767,19 +767,21 @@ class ComandScraper(BaseScraper):
                     cross_data_to_save = {
                         'title_original_html': original_title if original_title else None,
                         'magnet_processed': original_release_title if original_release_title else None,
+                        'magnet_original': magnet_original if magnet_original else None,
                         'title_translated_html': title_translated_processed if title_translated_processed else None,
                         'imdb': imdb if imdb else None,
                         'missing_dn': missing_dn,
                         'origem_audio_tag': origem_audio_tag if origem_audio_tag != 'N/A' else None,
                         'size': size if size and size.strip() else None,
-                        'has_legenda': has_legenda
+                        'has_legenda': has_legenda,
+                        'legend': legend_info if legend_info else None
                     }
                     save_cross_data_to_redis(info_hash, cross_data_to_save)
                 except Exception:
                     pass
                 
                 torrent = {
-                    'title': final_title,
+                    'title_processed': final_title,
                     'original_title': original_title if original_title else page_title,
                     'title_translated_processed': title_translated_processed if title_translated_processed else None,
                     'details': absolute_link,
@@ -794,7 +796,9 @@ class ComandScraper(BaseScraper):
                     'leech_count': 0,
                     'seed_count': 0,
                     'similarity': 1.0,
-                    'magnet_original': magnet_original if magnet_original else None
+                    'magnet_original': magnet_original if magnet_original else None,
+                    'legend': legend_info if legend_info else None,
+                    'has_legenda': has_legenda
                 }
                 torrents.append(torrent)
             

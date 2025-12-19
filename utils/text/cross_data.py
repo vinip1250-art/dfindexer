@@ -11,8 +11,7 @@ logger = logging.getLogger(__name__)
 def get_cross_data_from_redis(info_hash: str) -> Optional[Dict[str, Any]]:
     """
     Busca dados cruzados no Redis por info_hash.
-    Retorna um dicionário com os campos disponíveis ou None se não encontrado.
-    Campos: title_original_html, magnet_processed, title_translated_html, imdb, missing_dn, origem_audio_tag, tracker_seed, tracker_leech, size, has_legenda
+    Retorna todas as variáveis salvas no Redis, sem filtros ou organização.
     """
     if not info_hash or len(info_hash) != 40:
         return None
@@ -62,7 +61,7 @@ def get_cross_data_from_redis(info_hash: str) -> Optional[Dict[str, Any]]:
 def save_cross_data_to_redis(info_hash: str, data: Dict[str, Any]) -> None:
     """
     Salva dados cruzados no Redis por info_hash.
-    Campos aceitos: title_original_html, magnet_processed, title_translated_html, imdb, missing_dn, origem_audio_tag, tracker_seed, tracker_leech, size, has_legenda
+    Salva todas as variáveis do projeto diretamente, sem filtros ou organização.
     """
     if not info_hash or len(info_hash) != 40:
         return
@@ -80,33 +79,21 @@ def save_cross_data_to_redis(info_hash: str, data: Dict[str, Any]) -> None:
         
         key = torrent_cross_data_key(info_hash)
         
-        # Campos permitidos
-        allowed_fields = [
-            'title_original_html',
-            'magnet_processed',
-            'title_translated_html',
-            'imdb',
-            'missing_dn',
-            'origem_audio_tag',
-            'tracker_seed',
-            'tracker_leech',
-            'size',
-            'has_legenda'  # Indica se o torrent tem legenda (extraído do HTML ou detectado no título)
-        ]
-        
-        # Prepara dados para salvar (apenas campos válidos e não vazios)
+        # Prepara dados para salvar - usa todas as variáveis do projeto diretamente, sem filtros
         to_save = {}
-        for field in allowed_fields:
-            value = data.get(field)
+        for field, value in data.items():
+            if value is None:
+                continue
+            
             # Para campos de tracker, aceita 0 também (para evitar consultas futuras)
             if field in ('tracker_seed', 'tracker_leech'):
-                if value is not None and value != '' and value != 'N/A':
+                if value != '' and value != 'N/A':
                     # Aceita int (incluindo 0) ou string que representa número
                     if isinstance(value, int):
                         to_save[field] = str(value)  # Salva mesmo se for 0
                     elif isinstance(value, str) and value.strip().isdigit():
                         to_save[field] = value.strip()  # Salva string numérica
-            elif value is not None and value != '' and value != 'N/A':
+            else:
                 # Converte boolean para string
                 if isinstance(value, bool):
                     to_save[field] = 'true' if value else 'false'
@@ -115,7 +102,7 @@ def save_cross_data_to_redis(info_hash: str, data: Dict[str, Any]) -> None:
                     to_save[field] = str(value)
                 else:
                     value_str = str(value).strip()
-                    if value_str and len(value_str) >= 1:  # Aceita valores com pelo menos 1 caractere
+                    if value_str and value_str != 'N/A' and len(value_str) >= 1:
                         to_save[field] = value_str
         
         if not to_save:

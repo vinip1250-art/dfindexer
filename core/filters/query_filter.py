@@ -15,7 +15,7 @@ class QueryFilter:
         def filter_func(torrent: Dict) -> bool:
             return check_query_match(
                 query,
-                torrent.get('title', ''),
+                torrent.get('title_processed', ''),
                 torrent.get('original_title', ''),
                 torrent.get('title_translated_processed', '')
             )

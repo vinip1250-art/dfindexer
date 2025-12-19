@@ -115,7 +115,8 @@ def clean_title_translated_processed(title_translated_processed: str) -> str:
     # Remove LEGENDADO, LEGENDA, LEG (será substituído por [Leg])
     title_translated_processed = re.sub(r'(?i)\b(?:Legendado|LEGENDADO|Legenda|LEGENDA|Leg|LEG)\b', '', title_translated_processed)
     # Remove DUAL (será substituído por [Brazilian] e [Eng])
-    title_translated_processed = re.sub(r'(?i)\b(?:Dual|DUAL)\b', '', title_translated_processed)
+    # IMPORTANTE: NÃO remove DUAL.5.1, DUAL.2.0 ou DUAL.7.1 (são informações técnicas de áudio)
+    title_translated_processed = re.sub(r'(?i)\b(?:Dual|DUAL)(?![\.\s]?(?:5\.1|2\.0|7\.1))\b', '', title_translated_processed)
     
     # Remove palavras comuns de sites que não fazem parte do título
     # Remove "Download", "Assistir", "Online", "Torrent" (já removido acima, mas garante)

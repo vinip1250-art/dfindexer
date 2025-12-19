@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, asdict
 # Modelo de dados para torrent
 @dataclass
 class Torrent:
-    title: str
+    title_processed: str
     magnet: str
     info_hash: str
     date: str = ''
@@ -29,7 +29,7 @@ class Torrent:
     def from_dict(cls, data: Dict[str, Any]) -> 'Torrent':
         # Cria instância a partir de dicionário
         return cls(
-            title=data.get('title', ''),
+            title_processed=data.get('title_processed', ''),
             magnet=data.get('magnet', ''),
             info_hash=data.get('info_hash', ''),
             date=data.get('date', ''),

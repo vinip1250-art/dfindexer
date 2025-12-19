@@ -19,12 +19,17 @@ def check_query_match(query: str, title: str, title_original_html: str = '', tit
     # Remove stop words e palavras muito curtas
     clean_query_words = []
     for word in query_words:
-        # Remove caracteres não-alfabéticos e não-numéricos para limpeza básica
-        clean_word = re.sub(r'[^a-zA-Z0-9]', '', word)
+        # IMPORTANTE: Suporta caracteres Unicode (coreano, chinês, japonês, etc.)
+        # Remove apenas caracteres especiais/pontuação, mas mantém letras/números de qualquer idioma
+        # Usa \w que inclui letras Unicode, mas remove pontuação e espaços
+        clean_word = re.sub(r'[^\w]', '', word, flags=re.UNICODE)
         # Mantém palavras com pelo menos 1 caractere (aceita letras únicas como "v" em "gen v")
-        # e que não sejam stop words
-        if len(clean_word) >= 1 and clean_word.lower() not in STOP_WORDS:
-            clean_query_words.append(clean_word.lower())
+        # e que não sejam stop words (stop words são apenas em inglês/português)
+        if len(clean_word) >= 1:
+            # Verifica se é stop word apenas se contém apenas ASCII (stop words são ASCII)
+            if clean_word.isascii() and clean_word.lower() in STOP_WORDS:
+                continue
+            clean_query_words.append(clean_word.lower() if clean_word.isascii() else clean_word)
     
     if len(clean_query_words) == 0:
         return True  # Se não tem palavras válidas, retorna True (não filtra)
@@ -45,8 +50,10 @@ def check_query_match(query: str, title: str, title_original_html: str = '', tit
     combined_title = combined_title.replace('.', ' ')
     combined_title = re.sub(r'\s+', ' ', combined_title)
     
-    # Remove acentos para comparação
-    combined_title = remove_accents(combined_title)
+    # Remove acentos para comparação (apenas para texto ASCII)
+    # Para Unicode (coreano, chinês, etc.), mantém como está
+    if combined_title.isascii():
+        combined_title = remove_accents(combined_title)
     
     # VALIDAÇÃO DE EPISÓDIO: Se a query contém SxxExx, valida se o título contém o mesmo episódio
     # Extrai padrão SxxExx da query original (antes de normalizar)
@@ -113,17 +120,29 @@ def check_query_match(query: str, title: str, title_original_html: str = '', tit
                 else:
                     return False
     
+    # Normaliza título uma vez antes do loop (não muda durante o loop)
+    # Para títulos ASCII, remove acentos; para Unicode, usa como está
+    if combined_title.isascii():
+        title_normalized = remove_accents(combined_title)
+    else:
+        title_normalized = combined_title
+    
     # Conta quantas palavras da query estão presentes no título
     matches = 0
     matched_words = []  # Rastreia quais palavras fizeram match
     first_title_word_matched = False
     
     for query_word in clean_query_words:
-        query_word_no_accent = remove_accents(query_word)
+        # Para palavras ASCII, remove acentos; para Unicode (coreano, etc.), usa como está
+        if query_word.isascii():
+            query_word_normalized = remove_accents(query_word)
+        else:
+            query_word_normalized = query_word
         
         # Verifica match como palavra completa usando regex com word boundaries
-        pattern = r'\b' + re.escape(query_word_no_accent) + r'\b'
-        if re.search(pattern, combined_title, re.IGNORECASE):
+        # Usa flag UNICODE para suportar caracteres não-ASCII
+        pattern = r'\b' + re.escape(query_word_normalized) + r'\b'
+        if re.search(pattern, title_normalized, re.IGNORECASE | re.UNICODE):
             matches += 1
             matched_words.append(query_word)
             if query_word == first_title_word:
@@ -132,9 +151,9 @@ def check_query_match(query: str, title: str, title_original_html: str = '', tit
         
         # Se não encontrou como palavra completa, tenta match parcial no início de palavras
         # Isso resolve casos como "Ranma" encontrando "Ranma12" ou "Ranma1/2"
-        # Usa lookahead para garantir que é o início de uma palavra (seguido de letra/número)
-        partial_pattern = r'\b' + re.escape(query_word_no_accent) + r'(?=[a-zA-Z0-9])'
-        if re.search(partial_pattern, combined_title, re.IGNORECASE):
+        # Para Unicode, também funciona porque \w inclui caracteres Unicode
+        partial_pattern = r'\b' + re.escape(query_word_normalized) + r'(?=\w)'
+        if re.search(partial_pattern, title_normalized, re.IGNORECASE | re.UNICODE):
             matches += 1
             matched_words.append(query_word)
             if query_word == first_title_word:
@@ -142,9 +161,10 @@ def check_query_match(query: str, title: str, title_original_html: str = '', tit
             continue
 
         # Trata casos de temporada: query "1" deve encontrar "S1"/"S01"
-        if query_word_no_accent.isdigit():
-            season_patterns = [f"s{query_word_no_accent}", f"s{query_word_no_accent.zfill(2)}"]
-            if any(sp in combined_title for sp in season_patterns):
+        if query_word_normalized.isdigit():
+            season_patterns = [f"s{query_word_normalized}", f"s{query_word_normalized.zfill(2)}"]
+            # Para verificação de temporada, usa título normalizado
+            if any(sp in title_normalized for sp in season_patterns):
                 matches += 1
                 matched_words.append(query_word)
 
@@ -210,10 +230,38 @@ def check_query_match(query: str, title: str, title_original_html: str = '', tit
             
             return False
         
-        # Para queries menores (3-4 palavras): mantém lógica original
-        # Se o ano corresponde e há pelo menos 2 matches E pelo menos 1 é palavra de título, aceita
-        if year_in_title and matches >= 2 and has_title_match:
+        # Para queries menores (3-4 palavras): lógica mais rigorosa
+        # Conta palavras não-numéricas (título) na query
+        title_words_in_query = [w for w in clean_query_words if not w.isdigit() or len(w) >= 3]
+        title_words_count = len(title_words_in_query)
+        
+        # Conta matches de palavras de título (não ano, não temporada)
+        title_word_matches = sum(1 for w in matched_words if not w.isdigit() or len(w) >= 3)
+        
+        # Para queries de 3 palavras: exige que TODAS as palavras não numéricas façam match
+        # E se houver ano na query, ele DEVE corresponder exatamente
+        if total_words == 3:
+            # Todas as palavras de título devem fazer match
+            if title_word_matches < title_words_count:
+                return False
+            # Se há ano na query, ele DEVE corresponder exatamente
+            if year_in_query and not year_in_title:
+                return False
+            # Todas as condições atendidas
             return True
-        # Caso contrário, exige pelo menos 2 correspondências E pelo menos 1 palavra de título
+        
+        # Para queries de 4 palavras: exige pelo menos 3 matches de palavras de título
+        # E se houver ano na query, ele DEVE corresponder exatamente
+        if total_words == 4:
+            # Pelo menos 3 palavras de título devem fazer match
+            if title_word_matches < 3:
+                return False
+            # Se há ano na query, ele DEVE corresponder exatamente
+            if year_in_query and not year_in_title:
+                return False
+            # Todas as condições atendidas
+            return True
+        
+        # Fallback para outras situações (não deveria chegar aqui)
         return matches >= 2 and has_title_match
 

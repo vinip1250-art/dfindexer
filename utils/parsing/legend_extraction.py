@@ -398,12 +398,163 @@ def _extract_legenda_limon(doc: BeautifulSoup, entry_meta_list: Optional[list] =
     return legenda
 
 
+def _extract_legenda_starck(doc: BeautifulSoup, **kwargs) -> str:
+    """
+    Starck: Extrai "Legenda" de .post-description p.
+    """
+    legenda = ''
+    
+    # Busca em .post-description p (mesma estrutura usada para extrair áudio)
+    capa = doc.find('div', class_='capa')
+    if not capa:
+        return legenda
+    
+    for p in capa.select('.post-description p'):
+        html_content = str(p)
+        text = ' '.join(span.get_text() for span in p.find_all('span'))
+        
+        # Padrões para extrair legenda
+        legenda_patterns = [
+            r'(?i)Legenda\s*:\s*([^<\n\r]+?)(?:<br|</p|</div|Nota|Tamanho|IMDb|Vídeo|Áudio|Idioma|$)',
+            r'(?i)<[^>]*>Legenda\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</p|</div|Nota|Tamanho|$)',
+            r'(?i)Legendas?\s*:\s*([^<\n\r]+?)(?:<br|</p|</div|Nota|Tamanho|IMDb|Vídeo|Áudio|Idioma|$)',
+        ]
+        
+        for pattern in legenda_patterns:
+            legenda_match = re.search(pattern, html_content, re.DOTALL)
+            if legenda_match:
+                legenda = legenda_match.group(1).strip()
+                legenda = html.unescape(legenda)
+                legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+                legenda = re.sub(r'\s+', ' ', legenda).strip()
+                # Para antes de encontrar palavras de parada
+                stop_words = ['Nota', 'Tamanho', 'IMDb', 'Vídeo', 'Áudio', 'Idioma']
+                for stop_word in stop_words:
+                    if stop_word in legenda:
+                        idx = legenda.index(stop_word)
+                        legenda = legenda[:idx].strip()
+                        break
+                if legenda:
+                    return legenda
+        
+        # Busca também no texto limpo (pode ter "S/L" ou "S.L.")
+        text_lower = text.lower()
+        if 'legenda' in text_lower:
+            # Tenta extrair o valor após "Legenda:"
+            legenda_match = re.search(r'(?i)legenda\s*:\s*([^\n\r]+?)(?:\n|Nota|Tamanho|IMDb|Vídeo|Áudio|Idioma|$)', text, re.DOTALL)
+            if legenda_match:
+                legenda = legenda_match.group(1).strip()
+                legenda = re.sub(r'\s+', ' ', legenda).strip()
+                if legenda:
+                    return legenda
+    
+    return legenda
+
+
+def _extract_legenda_tfilme(doc: BeautifulSoup, **kwargs) -> str:
+    """
+    TFilme: Extrai "Legenda" de div.content.
+    """
+    legenda = ''
+    
+    # Busca em div.content primeiro (estrutura padrão do tfilme)
+    article = doc.find('article')
+    if not article:
+        return legenda
+    
+    content_div = article.find('div', class_='content')
+    if not content_div:
+        return legenda
+    
+    content_html = str(content_div)
+    
+    # Extrai Legenda - padrão 1: <b>Legenda:</b>
+    # Captura valores múltiplos separados por vírgula (ex: "PT-BR, Inglês, Espanhol")
+    legenda_match = re.search(r'(?i)<b>Legenda:</b>\s*([^<]+?)(?:<br|</div|</p|</b|Tamanho|IMDb|Vídeo|Áudio|Idioma|$)', content_html)
+    if legenda_match:
+        legenda = legenda_match.group(1).strip()
+        # Remove entidades HTML
+        legenda = html.unescape(legenda)
+        legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+        # Para antes de encontrar palavras de parada
+        stop_words = ['Tamanho', 'IMDb', 'Vídeo', 'Áudio', 'Idioma']
+        for stop_word in stop_words:
+            if stop_word in legenda:
+                idx = legenda.index(stop_word)
+                legenda = legenda[:idx].strip()
+                break
+        if legenda:
+            return legenda
+    
+    # Padrão 2: Legenda: sem tag bold
+    if not legenda:
+        legenda_match = re.search(r'(?i)Legenda\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|Tamanho|IMDb|Vídeo|Áudio|Idioma|$)', content_html)
+        if legenda_match:
+            legenda = legenda_match.group(1).strip()
+            legenda = html.unescape(legenda)
+            legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+            # Para antes de encontrar palavras de parada
+            stop_words = ['Tamanho', 'IMDb', 'Vídeo', 'Áudio', 'Idioma']
+            for stop_word in stop_words:
+                if stop_word in legenda:
+                    idx = legenda.index(stop_word)
+                    legenda = legenda[:idx].strip()
+                    break
+            if legenda:
+                return legenda
+    
+    return legenda
+
+
+def _extract_legenda_portal(doc: BeautifulSoup, **kwargs) -> str:
+    """
+    Portal: Extrai "Legenda" de div.content.
+    """
+    legenda = ''
+    
+    # Busca em div.content primeiro (estrutura padrão do portal)
+    article = doc.find('article')
+    if not article:
+        return legenda
+    
+    content_div = article.find('div', class_='content')
+    if not content_div:
+        return legenda
+    
+    content_html = str(content_div)
+    
+    # Extrai Legenda - padrão 1: <b>Legenda:</b>
+    legenda_match = re.search(r'(?i)<b>Legenda:</b>\s*([^<]+?)(?:<br|</div|</p|$)', content_html)
+    if legenda_match:
+        legenda = legenda_match.group(1).strip()
+        # Remove entidades HTML
+        legenda = html.unescape(legenda)
+        legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+        if legenda:
+            return legenda
+    
+    # Padrão 2: Legenda: sem tag bold
+    if not legenda:
+        legenda_match = re.search(r'(?i)Legenda\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|$)', content_html)
+        if legenda_match:
+            legenda = legenda_match.group(1).strip()
+            legenda = html.unescape(legenda)
+            legenda = re.sub(r'<[^>]+>', '', legenda).strip()
+            if legenda:
+                return legenda
+    
+    return legenda
+
+
 # Mapeamento de scrapers para funções de extração
 LEGENDA_EXTRACTORS = {
     'rede': _extract_legenda_rede,
     'bludv': _extract_legenda_bludv,
     'comand': _extract_legenda_comand,
     'limon': _extract_legenda_limon,
+    'starck': _extract_legenda_starck,
+    'tfilme': _extract_legenda_tfilme,
+    'portal': _extract_legenda_portal,
 }
 
 
@@ -441,7 +592,7 @@ def extract_legenda_from_page(doc: BeautifulSoup, scraper_type: Optional[str] = 
     return ''
 
 
-def determine_legend_info(legenda: str, release_title_magnet: Optional[str] = None, info_hash: Optional[str] = None, skip_metadata: bool = False) -> Optional[str]:
+def determine_legend_info(legenda: str, magnet_processed: Optional[str] = None, info_hash: Optional[str] = None, skip_metadata: bool = False) -> Optional[str]:
     """
     Determina legend_info baseado na legenda extraída com fallbacks.
     Suporta múltiplos valores: "Português, Inglês" ou "Português, Japonês" (máximo 3)
@@ -454,7 +605,7 @@ def determine_legend_info(legenda: str, release_title_magnet: Optional[str] = No
     
     Args:
         legenda: Texto extraído do campo "Legenda" (HTML)
-        release_title_magnet: Nome do magnet link para fallback
+        magnet_processed: Nome do magnet processado para fallback
         info_hash: Hash do torrent para fallbacks (metadata e cross_data)
         skip_metadata: Se True, pula busca em metadata
     
@@ -467,24 +618,47 @@ def determine_legend_info(legenda: str, release_title_magnet: Optional[str] = No
     # ============================================================================
     
     if legenda:
-        legenda_lower = legenda.lower()
+        legenda_original = legenda.strip()
+        legenda_lower = legenda_original.lower()
+        
+        # Se for exatamente "S/L" ou "S.L." (preserva o formato original)
+        if legenda_original.upper() in ['S/L', 'S.L.'] or re.match(r'^\s*s[/\.]l\s*$', legenda_lower):
+            return legenda_original.upper() if legenda_original.upper() in ['S/L', 'S.L.'] else legenda_original
         
         # Lista de valores detectados
         valores_detectados = []
         
-        # Verifica se tem português na legenda
+        # Verifica se tem "S/L" ou "S.L." (indica legenda, mas preserva o formato)
+        if 's/l' in legenda_lower or 's.l.' in legenda_lower or re.search(r'\bs[/\.]l\b', legenda_lower):
+            # Preserva o formato original se possível
+            if 'S/L' in legenda_original:
+                valores_detectados.append('S/L')
+            elif 'S.L.' in legenda_original:
+                valores_detectados.append('S.L.')
+            else:
+                valores_detectados.append('legendado')
+        
+        # Verifica se tem português na legenda (PT-BR, PTBR, PT BR, Português, Portugues)
+        # Não usa apenas "pt" para evitar falsos positivos (ex: "Espanhol" contém "pt")
         if ('português' in legenda_lower or 'portugues' in legenda_lower or 
             'pt-br' in legenda_lower or 'ptbr' in legenda_lower or 
-            'pt br' in legenda_lower or 'pt' in legenda_lower):
-            valores_detectados.append('legendado')
+            'pt br' in legenda_lower or re.search(r'\bpt\s*[-:]?\s*br\b', legenda_lower)):
+            valores_detectados.append('Português')
         
-        # Verifica se tem inglês na legenda
-        if 'inglês' in legenda_lower or 'ingles' in legenda_lower or 'english' in legenda_lower:
-            valores_detectados.append('inglês')
+        # Verifica se tem inglês na legenda (Inglês, Ingles, English, Eng)
+        if ('inglês' in legenda_lower or 'ingles' in legenda_lower or 
+            'english' in legenda_lower or re.search(r'\beng\b', legenda_lower)):
+            valores_detectados.append('Inglês')
         
-        # Verifica se tem japonês na legenda
-        if 'japonês' in legenda_lower or 'japones' in legenda_lower or 'japanese' in legenda_lower:
-            valores_detectados.append('japonês')
+        # Verifica se tem espanhol na legenda (Espanhol, Espanol, Spanish, Esp)
+        if ('espanhol' in legenda_lower or 'espanol' in legenda_lower or 
+            'spanish' in legenda_lower or re.search(r'\besp\b', legenda_lower)):
+            valores_detectados.append('Espanhol')
+        
+        # Verifica se tem japonês na legenda (Japonês, Japones, Japanese, Jap)
+        if ('japonês' in legenda_lower or 'japones' in legenda_lower or 
+            'japanese' in legenda_lower or re.search(r'\bjap\b', legenda_lower)):
+            valores_detectados.append('Japonês')
         
         # Limita a 3 valores no máximo
         valores_detectados = valores_detectados[:3]
@@ -497,8 +671,8 @@ def determine_legend_info(legenda: str, release_title_magnet: Optional[str] = No
     # FALLBACK 1: Magnet (legendado/legenda/leg)
     # ============================================================================
     
-    if release_title_magnet:
-        release_lower = release_title_magnet.lower()
+    if magnet_processed:
+        release_lower = magnet_processed.lower()
         if 'legendado' in release_lower or 'legenda' in release_lower or re.search(r'\bleg\b', release_lower):
             return 'legendado'
     
@@ -525,8 +699,8 @@ def determine_legend_info(legenda: str, release_title_magnet: Optional[str] = No
         try:
             from utils.text.cross_data import get_cross_data_from_redis
             cross_data = get_cross_data_from_redis(info_hash)
-            if cross_data and cross_data.get('release_title_magnet'):
-                cross_release = cross_data.get('release_title_magnet')
+            if cross_data and cross_data.get('magnet_processed'):
+                cross_release = cross_data.get('magnet_processed')
                 if cross_release and cross_release != 'N/A':
                     cross_release_lower = str(cross_release).lower()
                     if 'legendado' in cross_release_lower or 'legenda' in cross_release_lower or re.search(r'\bleg\b', cross_release_lower):
@@ -537,7 +711,7 @@ def determine_legend_info(legenda: str, release_title_magnet: Optional[str] = No
     return None
 
 
-def determine_legend_presence(legend_info_from_html: Optional[str] = None, audio_html_content: Optional[str] = None, release_title_magnet: Optional[str] = None, info_hash: Optional[str] = None, skip_metadata: bool = False) -> bool:
+def determine_legend_presence(legend_info_from_html: Optional[str] = None, audio_html_content: Optional[str] = None, magnet_processed: Optional[str] = None, info_hash: Optional[str] = None, skip_metadata: bool = False) -> bool:
     """
     Determina se há presença de legenda seguindo a ordem de fallbacks especificada.
     Suporta múltiplos valores: "legendado, inglês" ou "legendado, japonês" (máximo 3)
@@ -552,7 +726,7 @@ def determine_legend_presence(legend_info_from_html: Optional[str] = None, audio
     Args:
         legend_info_from_html: Valor de legend_info extraído do HTML (ex: 'legendado' ou 'legendado, inglês')
         audio_html_content: Conteúdo HTML completo para busca
-        release_title_magnet: Nome do magnet link (release title)
+        magnet_processed: Nome do magnet processado
         info_hash: Hash do torrent para buscar metadata e cross_data
         skip_metadata: Se True, pula busca em metadata
     
@@ -567,18 +741,18 @@ def determine_legend_presence(legend_info_from_html: Optional[str] = None, audio
     # ============================================================================
     
     if legend_info_from_html:
-        # Se legend_info_from_html contém 'legendado' (pode ter múltiplos valores)
+        # Se legend_info_from_html contém 'legendado' ou 'S/L' (pode ter múltiplos valores)
         legend_info_str = str(legend_info_from_html).lower()
-        if 'legendado' in legend_info_str:
+        if 'legendado' in legend_info_str or 's/l' in legend_info_str or 's.l.' in legend_info_str or re.search(r'\bs[/\.]l\b', legend_info_str):
             has_legenda = True
             return has_legenda
     
     # ============================================================================
-    # FALLBACK 1: LINK do html contém (legendado/legenda/leg)
+    # FALLBACK 1: LINK do html contém (legendado/legenda/leg/S/L)
     # ============================================================================
     
     if audio_html_content and not has_legenda:
-        if re.search(r'(?i)(?:legendado|legenda|\bleg\b)', audio_html_content):
+        if re.search(r'(?i)(?:legendado|legenda|\bleg\b|s[/\.]l\b)', audio_html_content):
             has_legenda = True
             return has_legenda
     
@@ -586,8 +760,8 @@ def determine_legend_presence(legend_info_from_html: Optional[str] = None, audio
     # FALLBACK 2: Magnet (legendado/legenda/leg)
     # ============================================================================
     
-    if release_title_magnet and not has_legenda:
-        release_lower = release_title_magnet.lower()
+    if magnet_processed and not has_legenda:
+        release_lower = magnet_processed.lower()
         if 'legendado' in release_lower or 'legenda' in release_lower or re.search(r'\bleg\b', release_lower):
             has_legenda = True
             return has_legenda
@@ -616,8 +790,8 @@ def determine_legend_presence(legend_info_from_html: Optional[str] = None, audio
         try:
             from utils.text.cross_data import get_cross_data_from_redis
             cross_data = get_cross_data_from_redis(info_hash)
-            if cross_data and cross_data.get('release_title_magnet'):
-                cross_release = cross_data.get('release_title_magnet')
+            if cross_data and cross_data.get('magnet_processed'):
+                cross_release = cross_data.get('magnet_processed')
                 if cross_release and cross_release != 'N/A':
                     cross_release_lower = str(cross_release).lower()
                     if 'legendado' in cross_release_lower or 'legenda' in cross_release_lower or re.search(r'\bleg\b', cross_release_lower):

@@ -133,7 +133,7 @@ def process_magnet_links(
                 year,
                 original_release_title,
                 title_translated_html=title_translated_processed_str,
-                magnet_original_magnet=magnet_original
+                magnet_original=magnet_original
             )
             
             # Adiciona tags de áudio
@@ -165,7 +165,8 @@ def process_magnet_links(
             try:
                 cross_data_to_save = {
                     'title_original_html': str(local_original_title) if local_original_title else None,
-                    'magnet_processed': magnet_original if not missing_dn else None,
+                    'magnet_processed': original_release_title if original_release_title else None,
+                    'magnet_original': magnet_original if magnet_original else None,
                     'title_translated_html': str(local_title_translated_processed) if local_title_translated_processed else None,
                     'imdb': local_imdb if local_imdb else None,
                     'missing_dn': missing_dn,
@@ -178,7 +179,7 @@ def process_magnet_links(
             
             # Cria torrent dict
             torrent = {
-                'title': final_title,
+                'title_processed': final_title,
                 'original_title': local_original_title if local_original_title else (local_title_translated_processed if local_title_translated_processed else page_title),
                 'title_translated_processed': local_title_translated_processed if local_title_translated_processed else None,
                 'details': absolute_link,

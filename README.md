@@ -252,7 +252,7 @@ http://localhost:7006/api
 {
   "results": [
     {
-      "title": "Pluribus.S01.2025.WEB-DL",
+      "title_processed": "Pluribus.S01.2025.WEB-DL",
       "original_title": "Pluribus",
       "details": "https://...",
       "year": "2025",

@@ -97,13 +97,13 @@ class TorrentEnricher:
                         # Preenche title_translated_processed se não estiver preenchido
                         if not torrent.get('title_translated_processed') and cross_data.get('title_translated_html'):
                             torrent['title_translated_processed'] = cross_data.get('title_translated_html', '')
-                        # Adiciona release_title_magnet do cross-data
-                        if cross_data.get('release_title_magnet'):
-                            torrent['release_title_magnet'] = cross_data.get('release_title_magnet')
+                        # Adiciona magnet_processed do cross-data
+                        if cross_data.get('magnet_processed'):
+                            torrent['magnet_processed'] = cross_data.get('magnet_processed')
                 except Exception:
                     pass
             
-            title = torrent.get('title', '')
+            title = torrent.get('title_processed', '')
             original_title = torrent.get('original_title', '')
             title_translated = torrent.get('title_translated_processed', '')
             
@@ -128,21 +128,21 @@ class TorrentEnricher:
                     if cached_metadata and cached_metadata.get('name'):
                         name = cached_metadata.get('name', '').strip()
                         if name and len(name) >= 3:
-                            torrent['title'] = name
+                            torrent['title_processed'] = name
                     else:
                         # Só busca se não está em cache (será buscado em batch depois)
                         scraper_name = getattr(self, '_current_scraper_name', None)
                         # Tenta obter título de múltiplas fontes para melhorar o log
-                        title_for_log = (torrent.get('title') or 
+                        title_for_log = (torrent.get('title_processed') or 
                                         torrent.get('original_title') or 
                                         torrent.get('title_translated_processed') or
-                                        torrent.get('release_title_magnet') or
+                                        torrent.get('magnet_processed') or
                                         None)
                         metadata = fetch_metadata_from_itorrents(info_hash, scraper_name=scraper_name, title=title_for_log)
                         if metadata and metadata.get('name'):
                             name = metadata.get('name', '').strip()
                             if name and len(name) >= 3:
-                                torrent['title'] = name
+                                torrent['title_processed'] = name
                 except Exception:
                     pass
     
@@ -178,9 +178,9 @@ class TorrentEnricher:
                 from utils.text.cross_data import get_cross_data_from_redis
                 cross_data = get_cross_data_from_redis(info_hash)
                 if cross_data:
-                    has_release_title = cross_data.get('release_title_magnet')
+                    has_release_title = cross_data.get('magnet_processed')
                     has_size = cross_data.get('size')
-                    # Se já temos release_title_magnet E size no cross_data, pode pular metadata
+                    # Se já temos magnet_processed E size no cross_data, pode pular metadata
                     if has_release_title and has_size:
                         return (torrent, None)
             except Exception:
@@ -204,10 +204,10 @@ class TorrentEnricher:
                     # Obtém scraper_name e title para o log
                     scraper_name = getattr(self, '_current_scraper_name', None)
                     # Tenta obter título de múltiplas fontes para melhorar o log
-                    title = (torrent.get('title') or 
+                    title = (torrent.get('title_processed') or 
                             torrent.get('original_title') or 
                             torrent.get('title_translated_processed') or
-                            torrent.get('release_title_magnet') or
+                            torrent.get('magnet_processed') or
                             None)
                     metadata = fetch_metadata_from_itorrents(info_hash, scraper_name=scraper_name, title=title)
                     return (torrent, metadata)
@@ -422,7 +422,7 @@ class TorrentEnricher:
             # Se já tem IMDB, salva no cache para reutilização
             imdb = torrent.get('imdb', '').strip()
             info_hash = torrent.get('info_hash', '').strip().lower()
-            title = torrent.get('title', '')
+            title = torrent.get('title_processed', '')
             
             if imdb and imdb.startswith('tt') and imdb[2:].isdigit():
                 # Salva no cache por info_hash
@@ -480,10 +480,10 @@ class TorrentEnricher:
                             from magnet.metadata import fetch_metadata_from_itorrents
                             scraper_name = getattr(self, '_current_scraper_name', None)
                             # Tenta obter título de múltiplas fontes para melhorar o log
-                            title = (torrent.get('title') or 
+                            title = (torrent.get('title_processed') or 
                                     torrent.get('original_title') or 
                                     torrent.get('title_translated_processed') or
-                                    torrent.get('release_title_magnet') or
+                                    torrent.get('magnet_processed') or
                                     None)
                             metadata = fetch_metadata_from_itorrents(info_hash, scraper_name=scraper_name, title=title)
                         
@@ -534,7 +534,7 @@ class TorrentEnricher:
             log_parts = []
             if scraper_name:
                 log_parts.append(f"[{scraper_name}]")
-            title = torrent.get('title', '')
+            title = torrent.get('title_processed', '')
             if title:
                 title_preview = title[:120] if len(title) > 120 else title
                 log_parts.append(title_preview)
@@ -611,7 +611,7 @@ class TorrentEnricher:
                     log_parts = []
                     if scraper_name:
                         log_parts.append(f"[{scraper_name}]")
-                    title = torrent.get('title', '')
+                    title = torrent.get('title_processed', '')
                     if title:
                         title_preview = title[:120] if len(title) > 120 else title
                         log_parts.append(title_preview)

@@ -133,7 +133,9 @@ def indexer_handler(site_name: str = None):
                     }), 404
             display_label = types_info[normalized_type].get('display_name', site_name)
             log_prefix = f"[{display_label}]"
-            logger.info(f"{log_prefix} Query: '{query}' | Page: {page} | Filter: {filter_results} | FlareSolverr: {use_flaresolverr}")
+            # Mostra se o filtro será aplicado (sempre True quando há query, independente do parâmetro)
+            filter_will_be_applied = bool(query and len(query.strip()) > 0)
+            logger.info(f"{log_prefix} Query: '{query}' | Page: {page} | Filter: {filter_will_be_applied} | FlareSolverr: {use_flaresolverr}")
         
         is_prowlarr_test = not query
         
@@ -155,34 +157,42 @@ def indexer_handler(site_name: str = None):
                 else:
                     torrents, filter_stats = _indexer_service.get_page(normalized_type, page, use_flaresolverr, is_prowlarr_test, max_results=max_results)
             
-            if filter_stats:
-                # Conta hashes únicos (ignora duplicados do mesmo scraper)
-                unique_hashes = set()
-                for torrent in torrents:
-                    info_hash = torrent.get('info_hash', '')
-                    if info_hash:
-                        unique_hashes.add(info_hash.lower())
-                
-                total_unique = len(unique_hashes)
-                
-                # Log mostra apenas únicos (sem duplicados internos)
-                logger.info(f"{log_prefix} [Filtro Aplicado] Total: {total_unique} | Filtrados: {filter_stats['filtered']} | Aprovados: {total_unique}")
-            else:
-                # Conta hashes únicos (ignora duplicados do mesmo scraper)
-                unique_hashes = set()
-                for torrent in torrents:
-                    info_hash = torrent.get('info_hash', '')
-                    if info_hash:
-                        unique_hashes.add(info_hash.lower())
-                
-                total_unique = len(unique_hashes)
-                
-                # Log mostra apenas únicos (sem duplicados internos)
-                logger.info(f"{log_prefix} [Filtro Aplicado] Total: {total_unique} | Filtrados: 0 | Aprovados: {total_unique}")
+            # Log apenas após processamento completo e quando há resultados
+            if torrents:
+                if filter_stats:
+                    # Conta hashes únicos (ignora duplicados do mesmo scraper)
+                    unique_hashes = set()
+                    for torrent in torrents:
+                        info_hash = torrent.get('info_hash', '')
+                        if info_hash:
+                            unique_hashes.add(info_hash.lower())
+                    
+                    total_unique = len(unique_hashes)
+                    
+                    # Formato: Query: '...' | Filter: True/False | Total: X | Filtrados: Y | Aprovados: Z
+                    query_display = query if query else ''
+                    filter_status = 'True' if query and query.strip() else 'False'
+                    logger.info(f"{log_prefix}  Query: '{query_display}' | Filter: {filter_status} | Total: {total_unique} | Filtrados: {filter_stats['filtered']} | Aprovados: {total_unique}")
+                else:
+                    # Conta hashes únicos (ignora duplicados do mesmo scraper)
+                    unique_hashes = set()
+                    for torrent in torrents:
+                        info_hash = torrent.get('info_hash', '')
+                        if info_hash:
+                            unique_hashes.add(info_hash.lower())
+                    
+                    total_unique = len(unique_hashes)
+                    
+                    # Formato: Query: '...' | Filter: True/False | Total: X | Filtrados: Y | Aprovados: Z
+                    query_display = query if query else ''
+                    filter_status = 'True' if query and query.strip() else 'False'
+                    logger.info(f"{log_prefix}  Query: '{query_display}' | Filter: {filter_status} | Total: {total_unique} | Filtrados: 0 | Aprovados: {total_unique}")
         else:
             # Busca em TODOS os scrapers quando não especificado
             log_prefix = "[TODOS]"
-            logger.info(f"{log_prefix} Query: '{query}' | Page: {page} | Filter: {filter_results} | FlareSolverr: {use_flaresolverr}")
+            # Mostra se o filtro será aplicado (sempre True quando há query, independente do parâmetro)
+            filter_will_be_applied = bool(query and len(query.strip()) > 0)
+            logger.info(f"{log_prefix} Query: '{query}' | Page: {page} | Filter: {filter_will_be_applied} | FlareSolverr: {use_flaresolverr}")
             
             is_prowlarr_test = not query
             all_torrents = []
@@ -214,6 +224,7 @@ def indexer_handler(site_name: str = None):
                         if scraper_stats:
                             all_filter_stats.append(scraper_stats)
                             
+                            # Log individual por scraper apenas quando há resultados
                             # Conta hashes únicos neste scraper (ignora duplicados do mesmo scraper)
                             unique_hashes_in_scraper = set()
                             for torrent in scraper_torrents:
@@ -224,8 +235,13 @@ def indexer_handler(site_name: str = None):
                             total_unique = len(unique_hashes_in_scraper)
                             
                             # Log individual por scraper - mostra apenas únicos (sem duplicados internos)
-                            logger.info(f"{log_prefix} [{scraper_label}] [Filtro] Total: {total_unique} | Filtrados: {scraper_stats.get('filtered', 0)} | Aprovados: {total_unique}")
-                        logger.info(f"{log_prefix} [{scraper_label}] Encontrados: {len(scraper_torrents)} resultados")
+                            # Formato: Query: '...' | Filter: True/False | Total: X | Filtrados: Y | Aprovados: Z
+                            if total_unique > 0:
+                                query_display = query if query else ''
+                                filter_status = 'True' if query and query.strip() else 'False'
+                                logger.info(f"{log_prefix} [{scraper_label}]  Query: '{query_display}' | Filter: {filter_status} | Total: {total_unique} | Filtrados: {scraper_stats.get('filtered', 0)} | Aprovados: {total_unique}")
+                        if scraper_torrents:
+                            logger.info(f"{log_prefix} [{scraper_label}] Encontrados: {len(scraper_torrents)} resultados")
                 except Exception as e:
                     logger.warning(f"{log_prefix} Erro ao buscar em [{scraper_type}]: {e}")
                     continue
@@ -239,19 +255,26 @@ def indexer_handler(site_name: str = None):
             torrents = all_torrents
             
             # Combina estatísticas de todos os scrapers
-            if all_filter_stats:
-                total_combined = sum(s.get('total', 0) for s in all_filter_stats)
-                filtered_combined = sum(s.get('filtered', 0) for s in all_filter_stats)
-                approved_combined = sum(s.get('approved', 0) for s in all_filter_stats)
-                filter_stats = {
-                    'total': total_combined,
-                    'filtered': filtered_combined,
-                    'approved': approved_combined,
-                    'scraper_name': 'TODOS'
-                }
-                logger.info(f"{log_prefix} [Filtro Aplicado] Total: {filter_stats['total']} | Filtrados: {filter_stats['filtered']} | Aprovados: {filter_stats['approved']}")
+            # Log apenas após processamento completo e quando há resultados
+            if torrents:
+                # Formato: Query: '...' | Filter: True/False | Total: X | Filtrados: Y | Aprovados: Z
+                query_display = query if query else ''
+                filter_status = 'True' if query and query.strip() else 'False'
+                if all_filter_stats:
+                    total_combined = sum(s.get('total', 0) for s in all_filter_stats)
+                    filtered_combined = sum(s.get('filtered', 0) for s in all_filter_stats)
+                    approved_combined = sum(s.get('approved', 0) for s in all_filter_stats)
+                    filter_stats = {
+                        'total': total_combined,
+                        'filtered': filtered_combined,
+                        'approved': approved_combined,
+                        'scraper_name': 'TODOS'
+                    }
+                    logger.info(f"{log_prefix}  Query: '{query_display}' | Filter: {filter_status} | Total: {filter_stats['total']} | Filtrados: {filter_stats['filtered']} | Aprovados: {filter_stats['approved']}")
+                else:
+                    logger.info(f"{log_prefix}  Query: '{query_display}' | Filter: {filter_status} | Total: {len(torrents)} | Filtrados: 0 | Aprovados: {len(torrents)}")
+                    filter_stats = None
             else:
-                logger.info(f"{log_prefix} [Filtro Aplicado] Total: {len(torrents)} | Filtrados: 0 | Aprovados: {len(torrents)}")
                 filter_stats = None
         
         response_data = {

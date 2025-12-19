@@ -585,13 +585,15 @@ class BaseScraper(ABC):
         """
         pass
     
-    def _prepare_page_flags(self, max_items: Optional[int] = None) -> Tuple[bool, bool, bool]:
+    def _prepare_page_flags(self, max_items: Optional[int] = None, is_test: bool = False) -> Tuple[bool, bool, bool]:
         """
         Prepara flags para processamento de página baseado em max_items e configurações.
         Centraliza a lógica de controle de metadata/trackers durante testes (query vazia).
         
         Args:
             max_items: Limite máximo de itens. Se None, indica query vazia
+            is_test: Flag indicando se é uma busca sem query (teste do Prowlarr)
+                     Quando True, o cache HTML não é usado para sempre buscar HTML fresco
             
         Returns:
             Tuple (is_using_default_limit, skip_metadata, skip_trackers)
@@ -600,7 +602,10 @@ class BaseScraper(ABC):
         skip_metadata = False
         skip_trackers = False
         self._skip_metadata = skip_metadata
-        self._is_test = is_using_default_limit
+        # IMPORTANTE: _is_test deve ser True quando is_test=True (query vazia)
+        # Isso garante que consultas sem query sempre busquem HTML fresco e vejam novos links atualizados
+        # O IndexerService passa is_test=True explicitamente quando a query está vazia
+        self._is_test = is_test or is_using_default_limit
         
         return is_using_default_limit, skip_metadata, skip_trackers
     
@@ -617,11 +622,11 @@ class BaseScraper(ABC):
         """
         return []
     
-    def _default_get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
+    def _default_get_page(self, page: str = '1', max_items: Optional[int] = None, is_test: bool = False) -> List[Dict]:
         """
         Implementação padrão de get_page que pode ser reutilizada pelos scrapers.
         """
-        is_using_default_limit, skip_metadata, skip_trackers = self._prepare_page_flags(max_items)
+        is_using_default_limit, skip_metadata, skip_trackers = self._prepare_page_flags(max_items, is_test=is_test)
         
         try:
             from utils.concurrency.scraper_helpers import (
@@ -683,8 +688,11 @@ class BaseScraper(ABC):
             variations.append(' '.join(words))
         
         # Primeira palavra (apenas se não for stop word)
+        # IMPORTANTE: Para queries com 3+ palavras, NÃO usa apenas a primeira palavra
+        # pois isso gera muitos resultados irrelevantes (ex: "great flood 2025" → busca só "great")
         query_words = query.split()
-        if len(query_words) > 1:
+        if len(query_words) > 1 and len(query_words) < 3:
+            # Apenas para queries de 2 palavras, permite buscar só a primeira
             first_word = query_words[0].lower()
             if first_word not in STOP_WORDS:
                 variations.append(query_words[0])
@@ -732,13 +740,14 @@ class BaseScraper(ABC):
         return self.enrich_torrents(all_torrents, filter_func=filter_func)
     
     @abstractmethod
-    def get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
+    def get_page(self, page: str = '1', max_items: Optional[int] = None, is_test: bool = False) -> List[Dict]:
         """
         Obtém torrents de uma página específica
         
         Args:
             page: Número da página
             max_items: Limite máximo de itens. Se None ou 0, não há limite (ilimitado)
+            is_test: Flag indicando se é uma busca sem query (teste do Prowlarr) - quando True, não usa cache HTML
         """
         pass
     
@@ -813,7 +822,7 @@ class BaseScraper(ABC):
         from magnet.metadata import fetch_metadata_from_itorrents
         
         for torrent in torrents:
-            title = torrent.get('title', '')
+            title = torrent.get('title_processed', '')
             if not title or len(title.strip()) < 10:
                 info_hash = torrent.get('info_hash')
                 if info_hash:
@@ -821,8 +830,8 @@ class BaseScraper(ABC):
                     try:
                         from utils.text.cross_data import get_cross_data_from_redis
                         cross_data = get_cross_data_from_redis(info_hash)
-                        if cross_data and cross_data.get('release_title_magnet'):
-                            # Se já temos release_title_magnet no cross_data, não precisa buscar metadata
+                        if cross_data and cross_data.get('magnet_processed'):
+                            # Se já temos magnet_processed no cross_data, não precisa buscar metadata
                             # O título já foi processado corretamente durante o scraping
                             continue
                     except Exception:
@@ -834,7 +843,7 @@ class BaseScraper(ABC):
                         if metadata and metadata.get('name'):
                             name = metadata.get('name', '').strip()
                             if name and len(name) >= 3:
-                                torrent['title'] = name
+                                torrent['title_processed'] = name
                     except Exception:
                         pass
     
@@ -871,9 +880,9 @@ class BaseScraper(ABC):
                 from utils.text.cross_data import get_cross_data_from_redis
                 cross_data = get_cross_data_from_redis(info_hash)
                 if cross_data:
-                    has_release_title = cross_data.get('release_title_magnet')
+                    has_release_title = cross_data.get('magnet_processed')
                     has_size = cross_data.get('size')
-                    # Se já temos release_title_magnet E size no cross_data, pode pular metadata
+                    # Se já temos magnet_processed E size no cross_data, pode pular metadata
                     if has_release_title and has_size:
                         return (torrent, None)
             except Exception:
@@ -1119,7 +1128,7 @@ class BaseScraper(ABC):
             log_parts = []
             if scraper_name:
                 log_parts.append(f"[{scraper_name}]")
-            title = torrent.get('title', '')
+            title = torrent.get('title_processed', '')
             if title:
                 title_preview = title[:120] if len(title) > 120 else title
                 log_parts.append(title_preview)
@@ -1207,7 +1216,7 @@ class BaseScraper(ABC):
             log_parts = []
             if scraper_name:
                 log_parts.append(f"[{scraper_name}]")
-            title = torrent.get('title', '')
+            title = torrent.get('title_processed', '')
             if title:
                 title_preview = title[:120] if len(title) > 120 else title
                 log_parts.append(title_preview)

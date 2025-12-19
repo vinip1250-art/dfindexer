@@ -318,7 +318,7 @@ def extract_audio_legenda_from_page(doc: BeautifulSoup, scraper_type: Optional[s
     return '', ''
 
 
-def determine_audio_info(idioma: str, legenda: str = '', release_title_magnet: Optional[str] = None, info_hash: Optional[str] = None, skip_metadata: bool = False) -> Optional[str]:
+def determine_audio_info(idioma: str, legenda: str = '', magnet_processed: Optional[str] = None, info_hash: Optional[str] = None, skip_metadata: bool = False) -> Optional[str]:
     """
     Determina audio_info baseado em idioma/áudio extraído com fallbacks.
     NOTA: Parâmetro legenda mantido para compatibilidade, mas não é mais usado.
@@ -333,7 +333,7 @@ def determine_audio_info(idioma: str, legenda: str = '', release_title_magnet: O
     Args:
         idioma: Texto extraído do campo "Idioma" ou "Áudio" (HTML)
         legenda: DEPRECATED - não é mais usado, mantido apenas para compatibilidade
-        release_title_magnet: Nome do magnet link para fallback
+        magnet_processed: Nome do magnet processado para fallback
         info_hash: Hash do torrent para fallbacks (metadata e cross_data)
         skip_metadata: Se True, pula busca em metadata
     
@@ -377,8 +377,8 @@ def determine_audio_info(idioma: str, legenda: str = '', release_title_magnet: O
     # FALLBACK 1: Magnet (dual/dublado/nacional/portugues) → marca Português, Inglês
     # ============================================================================
     
-    if release_title_magnet:
-        release_lower = release_title_magnet.lower()
+    if magnet_processed:
+        release_lower = magnet_processed.lower()
         if 'dual' in release_lower or 'dublado' in release_lower or 'nacional' in release_lower or 'portugues' in release_lower or 'português' in release_lower:
             # Se tem dual, marca Português, Inglês (dual)
             if 'dual' in release_lower:
@@ -411,8 +411,8 @@ def determine_audio_info(idioma: str, legenda: str = '', release_title_magnet: O
         try:
             from utils.text.cross_data import get_cross_data_from_redis
             cross_data = get_cross_data_from_redis(info_hash)
-            if cross_data and cross_data.get('release_title_magnet'):
-                cross_release = cross_data.get('release_title_magnet')
+            if cross_data and cross_data.get('magnet_processed'):
+                cross_release = cross_data.get('magnet_processed')
                 if cross_release and cross_release != 'N/A':
                     cross_release_lower = str(cross_release).lower()
                     if 'dual' in cross_release_lower or 'dublado' in cross_release_lower or 'nacional' in cross_release_lower or 'portugues' in cross_release_lower or 'português' in cross_release_lower:
@@ -478,7 +478,7 @@ def detect_audio_from_html(html_content: str) -> Optional[str]:
     return None
 
 
-def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Optional[str] = None, skip_metadata: bool = False, audio_info_from_html: Optional[str] = None, audio_html_content: Optional[str] = None) -> str:
+def add_audio_tag_if_needed(title: str, magnet_processed: str, info_hash: Optional[str] = None, skip_metadata: bool = False, audio_info_from_html: Optional[str] = None, audio_html_content: Optional[str] = None) -> str:
     """
     Acrescenta tags de idioma [Brazilian], [Eng], [Jap] quando detectadas.
     NOTA: Tag [Leg] foi removida conforme especificação.
@@ -486,7 +486,7 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
     Lógica de detecção de áudio:
     1. HTML (audio_info: 'Coletar o que está no campo') - usa o valor diretamente
     2. LINK do html contém DUAL → marca Português, Inglês
-    3. Nome Magnet (dual/dublado/nacional/portugues) → marca Português, Inglês
+    3. Nome Magnet processado (dual/dublado/nacional/portugues) → marca Português, Inglês
     4. Metadata
     5. Cross Data
     """
@@ -516,8 +516,8 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
             has_brazilian_audio = True
     
     # FALLBACK 1: Magnet (dual/dublado/nacional/portugues)
-    if release_title_magnet and not has_brazilian_audio:
-        release_lower = release_title_magnet.lower()
+    if magnet_processed and not has_brazilian_audio:
+        release_lower = magnet_processed.lower()
         if 'dual' in release_lower or 'dublado' in release_lower or 'nacional' in release_lower or 'portugues' in release_lower or 'português' in release_lower:
             has_brazilian_audio = True
     
@@ -538,8 +538,8 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
         try:
             from utils.text.cross_data import get_cross_data_from_redis
             cross_data = get_cross_data_from_redis(info_hash)
-            if cross_data and cross_data.get('release_title_magnet'):
-                cross_release = cross_data.get('release_title_magnet')
+            if cross_data and cross_data.get('magnet_processed'):
+                cross_release = cross_data.get('magnet_processed')
                 if cross_release and cross_release != 'N/A':
                     cross_release_lower = str(cross_release).lower()
                     if 'dual' in cross_release_lower or 'dublado' in cross_release_lower or 'nacional' in cross_release_lower or 'portugues' in cross_release_lower or 'português' in cross_release_lower:
@@ -558,8 +558,8 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
             has_eng_audio = True
     
     # FALLBACK 1: Magnet (dual/legendado/legenda/leg)
-    if release_title_magnet and not has_eng_audio:
-        release_lower = release_title_magnet.lower()
+    if magnet_processed and not has_eng_audio:
+        release_lower = magnet_processed.lower()
         if 'dual' in release_lower or 'legendado' in release_lower or 'legenda' in release_lower or re.search(r'\bleg\b', release_lower):
             has_eng_audio = True
     
@@ -580,8 +580,8 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
         try:
             from utils.text.cross_data import get_cross_data_from_redis
             cross_data = get_cross_data_from_redis(info_hash)
-            if cross_data and cross_data.get('release_title_magnet'):
-                cross_release = cross_data.get('release_title_magnet')
+            if cross_data and cross_data.get('magnet_processed'):
+                cross_release = cross_data.get('magnet_processed')
                 if cross_release and cross_release != 'N/A':
                     cross_release_lower = str(cross_release).lower()
                     if 'dual' in cross_release_lower or 'legendado' in cross_release_lower or 'legenda' in cross_release_lower or re.search(r'\bleg\b', cross_release_lower):
@@ -600,8 +600,8 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
             has_japones_audio = True
     
     # FALLBACK 1: Magnet (japonês/japones/japanese/jap)
-    if release_title_magnet and not has_japones_audio:
-        release_lower = release_title_magnet.lower()
+    if magnet_processed and not has_japones_audio:
+        release_lower = magnet_processed.lower()
         if 'japonês' in release_lower or 'japones' in release_lower or 'japanese' in release_lower or re.search(r'\bjap\b', release_lower):
             has_japones_audio = True
     
@@ -622,8 +622,8 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
         try:
             from utils.text.cross_data import get_cross_data_from_redis
             cross_data = get_cross_data_from_redis(info_hash)
-            if cross_data and cross_data.get('release_title_magnet'):
-                cross_release = cross_data.get('release_title_magnet')
+            if cross_data and cross_data.get('magnet_processed'):
+                cross_release = cross_data.get('magnet_processed')
                 if cross_release and cross_release != 'N/A':
                     cross_release_lower = str(cross_release).lower()
                     if 'japonês' in cross_release_lower or 'japones' in cross_release_lower or 'japanese' in cross_release_lower or re.search(r'\bjap\b', cross_release_lower):
@@ -647,6 +647,7 @@ def add_audio_tag_if_needed(title: str, release_title_magnet: str, info_hash: Op
     if tags_to_add:
         # Remove DUAL se [Brazilian] ou [Eng] foi adicionado
         if '[Brazilian]' in tags_to_add or '[Eng]' in tags_to_add:
+            # Remove DUAL standalone
             title = re.sub(r'\.?\.?DUAL\.?\.?', '.', title, flags=re.IGNORECASE)
             title = re.sub(r'\.{2,}', '.', title)
             title = title.strip('.')

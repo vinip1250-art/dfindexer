@@ -8,8 +8,8 @@ from utils.text.cleaning import clean_title, remove_accents
 
 
 # Extrai o núcleo do título removendo informações técnicas redundantes
-def _extract_base_title_from_release(release_title_magnet: str) -> str:
-    clean_release = clean_title(release_title_magnet)
+def _extract_base_title_from_release(magnet_processed: str) -> str:
+    clean_release = clean_title(magnet_processed)
     clean_release = remove_accents(clean_release)
     
     # Remove anos do início
@@ -59,7 +59,7 @@ def _extract_base_title_from_release(release_title_magnet: str) -> str:
         if re.match(r'^(19|20)\d{2}$', part):
             break
         # Para se encontrar informação técnica comum
-        if re.match(r'^(WEB-DL|WEBRip|BluRay|1080p|720p|2160p|x264|x265|DUAL|DUBLADO|HDR)', part, re.IGNORECASE):
+        if re.match(r'^(WEB-DL|WEBRip|BluRay|1080p|720p|2160p|FULLHD|x264|x265|DUAL|DUBLADO|HDR)', part, re.IGNORECASE):
             break
         if part and len(part) > 1:
             base_parts.append(part)
@@ -89,7 +89,7 @@ def _split_technical_components(text: str) -> str:
             re.search(r'(?i)\.\d{3,4}p\.', text)):
             # Verifica se há componentes realmente colados que precisam ser separados
             # Se não houver componentes colados (sem espaço entre eles), não processa
-            if not re.search(r'(?i)(WEB-DL|WEBRip|BluRay|DVDRip|HDRip|HDTV|BDRip|BRRip|CAMRip|CAM|TSRip|TS|TC|R5|SCR|DVDScr)(1080p|720p|2160p|480p|4K|UHD|FHD|HD|SD|HDR|x264|x265|H\.264|H\.265|AVC|HEVC)', text):
+            if not re.search(r'(?i)(WEB-DL|WEBRip|BluRay|DVDRip|HDRip|HDTV|BDRip|BRRip|CAMRip|CAM|TSRip|TS|TC|R5|SCR|DVDScr)(1080p|720p|2160p|480p|4K|UHD|FHD|FULLHD|HD|SD|HDR|x264|x265|H\.264|H\.265|AVC|HEVC)', text):
                 # Se não há componentes colados, retorna sem processar para preservar S01E01, S01 e 1080p
                 return text
     
@@ -110,7 +110,7 @@ def _split_technical_components(text: str) -> str:
     
     result = text
     
-    # IMPORTANTE: Preserva anos completos e padrões S01, S02, etc. ANTES de qualquer processamento
+    # IMPORTANTE: Preserva anos completos, padrões S01, S02, etc. ANTES de qualquer processamento
     # Substitui temporariamente por marcadores para evitar que sejam quebrados
     year_placeholders = {}
     season_placeholders = {}
@@ -152,7 +152,7 @@ def _split_technical_components(text: str) -> str:
         (r'(?<!\.)(WEB-DL|WEBRip|BluRay|DVDRip|HDRip|HDTV|BDRip|BRRip|CAMRip|CAM|TSRip|TS|TC|R5|SCR|DVDScr)(?!\.)', r'.\1.', re.IGNORECASE),
         # Qualidades (deve vir depois de fontes para evitar conflito)
         # IMPORTANTE: Não adiciona pontos se já está separado por ponto (ex: .1080p. já está correto)
-        (r'(?<!\.)(?<!E)(2160p|1080p|720p|480p|4K|UHD|FHD|HD|SD|HDR)(?!\.)', r'.\1.', re.IGNORECASE),
+        (r'(?<!\.)(?<!E)(2160p|1080p|720p|480p|4K|UHD|FHD|FULLHD|HD|SD|HDR)(?!\.)', r'.\1.', re.IGNORECASE),
         # Codecs (já processados acima, mas mantém para casos sem hífen)
         (r'(?<!\.)(x264|x265|H\.264|H\.265|AVC|HEVC)(?!\.)', r'.\1.', re.IGNORECASE),
         # Áudio
@@ -198,8 +198,8 @@ def _extract_technical_info(text: str) -> str:
     # Normaliza espaços para pontos
     text = re.sub(r'\s+', '.', text)
     
-    # IMPORTANTE: Processa WEB-DL e outros padrões com hífen ANTES de substituir todos os hífens
-    # Isso garante que WEB-DL seja reconhecido corretamente
+    # IMPORTANTE: Processa padrões com hífen ANTES de substituir todos os hífens
+    # Isso garante que WEB-DL e DTS-HD sejam reconhecidos corretamente
     # Substitui hífens em padrões técnicos específicos por um marcador temporário
     text = re.sub(r'(WEB-DL|DTS-HD)', lambda m: m.group(1).replace('-', '___HYPHEN___'), text, flags=re.IGNORECASE)
     
@@ -231,7 +231,7 @@ def _extract_technical_info(text: str) -> str:
             technical_parts.append(part_clean)
         elif re.match(r'^(19|20)\d{2}$', part_clean):
             technical_parts.append(part_clean)
-        elif re.match(r'^(1080p|720p|480p|2160p|4K|HD|FHD|UHD|SD|HDR)$', part_clean, re.IGNORECASE):
+        elif re.match(r'^(1080p|720p|480p|2160p|4K|HD|FHD|UHD|SD|HDR|FULLHD)$', part_clean, re.IGNORECASE):
             technical_parts.append(part_clean)
         elif re.match(r'^(x264|x265|H\.264|H\.265|AVC|HEVC)$', part_clean, re.IGNORECASE):
             technical_parts.append(part_clean)
@@ -279,7 +279,7 @@ def _ensure_default_format(title: str) -> str:
     if not title:
         return title
     normalized = title.lower()
-    if re.search(r'(?i)(web[-\.\s]?dl|webrip|bluray|bdrip|hdrip|hdtv|dvdrip|2160p|1080p|720p|480p|4k|camrip|cam|tsrip|ts|uhd|hdr)', normalized):
+    if re.search(r'(?i)(web[-\.\s]?dl|webrip|bluray|bdrip|hdrip|hdtv|dvdrip|2160p|1080p|720p|480p|4k|camrip|cam|tsrip|ts|uhd|fullhd|hdr)', normalized):
         return title
     if title.endswith('.'):
         return f"{title}WEB-DL"
@@ -287,13 +287,13 @@ def _ensure_default_format(title: str) -> str:
 
 
 # Força inclusão de tags de temporada encontradas na descrição original
-def _apply_season_temporada_tags(title: str, release_title_magnet: str, original_title_html: str, year: str) -> str:
+def _apply_season_temporada_tags(title: str, magnet_processed: str, original_title_html: str, year: str) -> str:
     if not title:
         return title
     
     context_parts = []
-    if release_title_magnet:
-        context_parts.append(release_title_magnet)
+    if magnet_processed:
+        context_parts.append(magnet_processed)
     if original_title_html:
         context_parts.append(original_title_html)
     if not context_parts:
@@ -392,7 +392,7 @@ def _reorder_title_components(title: str) -> str:
     structure_started = False
     
     quality_tokens = {
-        '1080P', '720P', '480P', '2160P', '4K', 'HD', 'FHD', 'UHD', 'SD', 'HDR'
+        '1080P', '720P', '480P', '2160P', '4K', 'HD', 'FHD', 'UHD', 'SD', 'HDR', 'FULLHD'
     }
     source_tokens = {
         'WEB-DL', 'WEBRIP', 'BLURAY', 'DVDRIP', 'HDRIP', 'HDTV', 'BDRIP',
@@ -404,6 +404,7 @@ def _reorder_title_components(title: str) -> str:
     audio_tokens = {
         'DUAL', 'DUBLADO', 'DDP5.1', 'ATMOS', 'AC3', 'AAC', 'MP3', 'FLAC', 'DTS', 'NACIONAL', 'LEGENDADO'
     }
+    
     
     for part in parts:
         clean_part = part.strip()
@@ -522,6 +523,7 @@ def _reorder_title_components(title: str) -> str:
             continue
         elif re.match(r'^(HDR|5\.1|2\.0|7\.1|DTS-HD|TrueHD)$', clean_part, re.IGNORECASE):
             # Outros técnicos de áudio/vídeo: HDR, 5.1, 2.0, etc.
+            # NOTA: 5.1, 2.0, 7.1 só vão para other_parts se não foram combinados com DUAL
             if clean_part not in other_parts:
                 other_parts.append(clean_part)
             structure_started = True

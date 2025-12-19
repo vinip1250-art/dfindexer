@@ -7,8 +7,8 @@ from typing import Optional
 # Busca o nome do torrent via metadata API quando falta display_name no magnet
 def get_release_title_from_redis(info_hash: str) -> Optional[str]:
     """
-    Busca release_title_magnet no Redis por info_hash.
-    Retorna o release_title_magnet se encontrado, None caso contrário.
+    Busca magnet_processed no Redis por info_hash (legado - usa chave antiga).
+    Retorna o magnet_processed se encontrado, None caso contrário.
     """
     from app.config import Config
     if not info_hash or len(info_hash) != Config.INFO_HASH_LENGTH:
@@ -36,7 +36,7 @@ def get_release_title_from_redis(info_hash: str) -> Optional[str]:
 
 def save_release_title_to_redis(info_hash: str, release_title: str) -> None:
     """
-    Salva release_title_magnet no Redis por info_hash.
+    Salva magnet_original no Redis por info_hash (legado - mantém compatibilidade).
     """
     if not info_hash or len(info_hash) != 40:
         return
@@ -68,8 +68,8 @@ def get_metadata_name(info_hash: str, skip_metadata: bool = False) -> Optional[s
     try:
         from utils.text.cross_data import get_cross_data_from_redis
         cross_data = get_cross_data_from_redis(info_hash)
-        if cross_data and cross_data.get('release_title_magnet'):
-            release_title = cross_data.get('release_title_magnet')
+        if cross_data and cross_data.get('magnet_processed'):
+            release_title = cross_data.get('magnet_processed')
             if release_title and release_title != 'N/A' and len(str(release_title).strip()) >= 3:
                 return str(release_title).strip()
     except Exception:

@@ -54,9 +54,12 @@ class IndexerServiceAsync:
         """
         scraper = create_scraper(scraper_type, use_flaresolverr=use_flaresolverr)
         
-        # Cria filtro se necessário
+        # IMPORTANTE: Aplica filtro automaticamente quando há query para evitar resultados irrelevantes
+        # Os sites retornam muitos resultados que não correspondem à busca, então o filtro é essencial
         filter_func = None
-        if filter_results and query:
+        if query:
+            # Sempre aplica filtro quando há query, independente de filter_results
+            # Isso garante que apenas resultados relevantes sejam retornados
             filter_func = QueryFilter.create_filter(query)
         
         # Busca com filtro se filter_results=True, caso contrário sem filtro
@@ -109,8 +112,10 @@ class IndexerServiceAsync:
         if is_test:
             max_links = Config.EMPTY_QUERY_MAX_LINKS if Config.EMPTY_QUERY_MAX_LINKS > 0 else None
         
-        # Busca torrents (ainda síncrono)
-        torrents = scraper.get_page(page, max_items=max_links)
+        # IMPORTANTE: Passa is_test=True para o scraper quando query está vazia
+        # Isso garante que _is_test=True no scraper, fazendo com que o cache HTML não seja usado
+        # Assim, consultas sem query sempre buscam HTML fresco e veem novos links atualizados
+        torrents = scraper.get_page(page, max_items=max_links, is_test=is_test)
         
         # Limita ANTES do enriquecimento para economizar processamento de metadata/trackers
         if max_results and max_results > 0:

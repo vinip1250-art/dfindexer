@@ -47,12 +47,18 @@ class TorrentProcessor:
     def remove_internal_fields(torrents: List[Dict]) -> None:
         # Remove apenas campos internos dos torrents
         # Garante que campo 'date' sempre tenha valor (fallback final se necessário)
+        # Adiciona campo 'title' como alias de 'title_processed' para compatibilidade com Prowlarr
         from datetime import datetime
         
         for torrent in torrents:
             torrent.pop('_metadata', None)
             torrent.pop('_metadata_fetched', None)
             torrent.pop('_original_order', None)
+            
+            # Adiciona campo 'title' como alias de 'title_processed' para compatibilidade com Prowlarr
+            # O Prowlarr espera o campo 'title' na resposta JSON
+            if 'title_processed' in torrent and 'title' not in torrent:
+                torrent['title'] = torrent.get('title_processed', '')
             
             # Garantia final: se date estiver vazio/None, preenche com data atual
             date_value = torrent.get('date')

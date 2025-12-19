@@ -103,9 +103,9 @@ class TfilmeScraper(BaseScraper):
         return (filmes_links, series_links)
     
     # Obtém torrents de uma página específica (usa helper padrão com extração customizada)
-    def get_page(self, page: str = '1', max_items: Optional[int] = None) -> List[Dict]:
+    def get_page(self, page: str = '1', max_items: Optional[int] = None, is_test: bool = False) -> List[Dict]:
         # Prepara flags de teste/metadata/trackers (centralizado no BaseScraper)
-        is_using_default_limit, skip_metadata, skip_trackers = self._prepare_page_flags(max_items)
+        is_using_default_limit, skip_metadata, skip_trackers = self._prepare_page_flags(max_items, is_test=is_test)
         
         try:
             # Constrói URL da página usando função utilitária
@@ -300,11 +300,10 @@ class TfilmeScraper(BaseScraper):
         audio_html_content = ''  # Armazena HTML completo para verificação adicional
         all_paragraphs_html = []  # Coleta HTML de todos os parágrafos
         
-        # Extrai informações de idioma e legenda do HTML
+        # Extrai informações de idioma do HTML
         # Busca em div.content primeiro (estrutura padrão do tfilme)
         content_div = article.find('div', class_='content')
         idioma = ''
-        legenda = ''
         
         if content_div:
             content_html = str(content_div)
@@ -318,14 +317,6 @@ class TfilmeScraper(BaseScraper):
                 idioma = html.unescape(idioma)
                 idioma = re.sub(r'<[^>]+>', '', idioma).strip()
             
-            # Extrai Legenda
-            legenda_match = re.search(r'(?i)<b>Legenda:</b>\s*([^<]+?)(?:<br|</div|</p|$)', content_html)
-            if legenda_match:
-                legenda = legenda_match.group(1).strip()
-                # Remove entidades HTML
-                legenda = html.unescape(legenda)
-                legenda = re.sub(r'<[^>]+>', '', legenda).strip()
-            
             # Se não encontrou com <b>, tenta sem tag bold
             if not idioma:
                 idioma_match = re.search(r'(?i)Idioma\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|$)', content_html)
@@ -333,35 +324,24 @@ class TfilmeScraper(BaseScraper):
                     idioma = idioma_match.group(1).strip()
                     idioma = html.unescape(idioma)
                     idioma = re.sub(r'<[^>]+>', '', idioma).strip()
-            
-            if not legenda:
-                legenda_match = re.search(r'(?i)Legenda\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|$)', content_html)
-                if legenda_match:
-                    legenda = legenda_match.group(1).strip()
-                    legenda = html.unescape(legenda)
-                    legenda = re.sub(r'<[^>]+>', '', legenda).strip()
         
-        # Determina audio_info baseado em Idioma e Legenda
-        if idioma or legenda:
-            idioma_lower = idioma.lower() if idioma else ''
-            legenda_lower = legenda.lower() if legenda else ''
+        # Determina audio_info baseado apenas em Idioma (legenda será tratada separadamente)
+        if idioma:
+            idioma_lower = idioma.lower()
             
             # Verifica se tem português no idioma (áudio)
             has_portugues_audio = 'português' in idioma_lower or 'portugues' in idioma_lower
-            # Verifica se tem português na legenda
-            has_portugues_legenda = 'português' in legenda_lower or 'portugues' in legenda_lower
-            # Verifica se tem Inglês no idioma ou legenda
-            has_ingles = 'inglês' in idioma_lower or 'ingles' in idioma_lower or 'english' in idioma_lower or 'inglês' in legenda_lower or 'ingles' in legenda_lower or 'english' in legenda_lower
+            # Verifica se tem Inglês no idioma
+            has_ingles = 'inglês' in idioma_lower or 'ingles' in idioma_lower or 'english' in idioma_lower
             
             # Lógica simplificada:
             # Prioridade: Idioma com português primeiro (gera [Brazilian])
-            # Depois: Legenda com português ou Inglês em qualquer campo (gera [Leg])
             if has_portugues_audio:
                 # Idioma tem português → gera [Brazilian]
                 audio_info = 'português'
-            elif has_portugues_legenda or has_ingles:
-                # Legenda tem português OU tem Inglês (em Idioma ou Legenda) → gera [Leg]
-                audio_info = 'legendado'
+            elif has_ingles:
+                # Idioma tem Inglês → pode gerar [Eng]
+                audio_info = 'inglês'
         
         # Se não encontrou em content, busca em parágrafos individuais
         if not audio_info:
@@ -527,7 +507,7 @@ class TfilmeScraper(BaseScraper):
                 )
                 
                 standardized_title = create_standardized_title(
-                    original_title, year, original_release_title, title_translated_html=title_translated_processed if title_translated_processed else None, magnet_original_magnet=magnet_original
+                    original_title, year, original_release_title, title_translated_html=title_translated_processed if title_translated_processed else None, magnet_original=magnet_original
                 )
                 
                 # Adiciona [Brazilian] se detectar DUAL/DUBLADO/NACIONAL, [Eng] se LEGENDADO, ou ambos se houver os dois
@@ -542,10 +522,29 @@ class TfilmeScraper(BaseScraper):
                 
                 # Determina origem_audio_tag
                 origem_audio_tag = 'N/A'
-                if magnet_original and ('dual' in magnet_original.lower() or 'dublado' in magnet_original.lower() or 'legendado' in magnet_original.lower()):
+                if audio_info:
+                    origem_audio_tag = f'HTML da página (detect_audio_from_html)'
+                elif magnet_original and ('dual' in magnet_original.lower() or 'dublado' in magnet_original.lower() or 'legendado' in magnet_original.lower()):
                     origem_audio_tag = 'magnet_processed'
                 elif missing_dn and info_hash:
                     origem_audio_tag = 'metadata (iTorrents.org) - usado durante processamento'
+                
+                # Extrai legenda do HTML usando função dedicada
+                from utils.parsing.legend_extraction import extract_legenda_from_page, determine_legend_info
+                legenda = extract_legenda_from_page(doc, scraper_type='tfilme')
+                
+                # Determina legend_info baseado na legenda extraída
+                legend_info = determine_legend_info(legenda) if legenda else None
+                
+                # Determina presença de legenda seguindo ordem de fallbacks
+                from utils.parsing.legend_extraction import determine_legend_presence
+                has_legenda = determine_legend_presence(
+                    legend_info_from_html=legend_info,
+                    audio_html_content=audio_html_content,
+                    magnet_processed=original_release_title,
+                    info_hash=info_hash,
+                    skip_metadata=self._skip_metadata
+                )
                 
                 # Extrai tamanho
                 size = ''
@@ -561,18 +560,21 @@ class TfilmeScraper(BaseScraper):
                     cross_data_to_save = {
                         'title_original_html': original_title if original_title else None,
                         'magnet_processed': original_release_title if original_release_title else None,
+                        'magnet_original': magnet_original if magnet_original else None,
                         'title_translated_html': title_translated_processed if title_translated_processed else None,
                         'imdb': imdb if imdb else None,
                         'missing_dn': missing_dn,
                         'origem_audio_tag': origem_audio_tag if origem_audio_tag != 'N/A' else None,
-                        'size': size if size and size.strip() else None
+                        'size': size if size and size.strip() else None,
+                        'has_legenda': has_legenda,
+                        'legend': legend_info if legend_info else None
                     }
                     save_cross_data_to_redis(info_hash, cross_data_to_save)
                 except Exception:
                     pass
                 
                 torrent = {
-                    'title': final_title,
+                    'title_processed': final_title,
                     'original_title': original_title if original_title else page_title,
                     'title_translated_processed': title_translated_processed if title_translated_processed else None,
                     'details': absolute_link,
@@ -587,7 +589,9 @@ class TfilmeScraper(BaseScraper):
                     'leech_count': 0,
                     'seed_count': 0,
                     'magnet_original': magnet_original if magnet_original else None,
-                    'similarity': 1.0
+                    'similarity': 1.0,
+                    'legend': legend_info if legend_info else None,
+                    'has_legenda': has_legenda
                 }
                 torrents.append(torrent)
             
