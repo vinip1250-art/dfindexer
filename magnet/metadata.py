@@ -633,7 +633,7 @@ def fetch_metadata_from_itorrents(info_hash: str, scraper_name: Optional[str] = 
                 _cache_failure(info_hash_lower, is_503=False, ttl=_METADATA_NOT_FOUND_CACHE_TTL)
                 # Logs de erro removidos para reduzir verbosidade
                 # Remove do conjunto de hashes sendo buscados mesmo em caso de falha
-                logger.debug(f"[Metadata] Buscando metadata: {log_id} → Não encontrado")
+                logger.debug(f"[Metadata] Buscando: {log_id} → Não encontrado")
                 with _hash_fetching_lock:
                     _hash_fetching.discard(info_hash_lower)
                 return None
@@ -649,7 +649,7 @@ def fetch_metadata_from_itorrents(info_hash: str, scraper_name: Optional[str] = 
         if not size:
             # Cacheia "não encontrado" usando circuit breaker (TTL de 2 minutos)
             _cache_failure(info_hash_lower, is_503=False, ttl=_METADATA_NOT_FOUND_CACHE_TTL)
-            logger.debug(f"[Metadata] Buscando metadata: {log_id} → Não encontrado (sem size)")
+            logger.debug(f"[Metadata] Buscando: {log_id} → Não encontrado (sem size)")
             with _hash_fetching_lock:
                 _hash_fetching.discard(info_hash_lower)
             return None
@@ -729,9 +729,9 @@ def fetch_metadata_from_itorrents(info_hash: str, scraper_name: Optional[str] = 
         
         # Log com resultado da busca e salvamento
         if saved_to_redis:
-            logger.debug(f"[Metadata] Buscando metadata: {log_id} → Salvo no Redis")
+            logger.debug(f"[Metadata] Buscando: {log_id} → Salvo no Redis")
         else:
-            logger.debug(f"[Metadata] Buscando metadata: {log_id} → Encontrado (não salvo no Redis)")
+            logger.debug(f"[Metadata] Buscando: {log_id} → Encontrado (não salvo no Redis)")
         
         # Remove do conjunto de hashes sendo buscados após salvar no cache com sucesso
         with _hash_fetching_lock:

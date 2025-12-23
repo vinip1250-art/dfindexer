@@ -43,9 +43,9 @@ async def get_metadata_semaphore_async() -> asyncio.Semaphore:
             # Double-check locking pattern
             if _metadata_semaphore is None or _current_limit != max_concurrent:
                 if _metadata_semaphore is not None:
-                    logger.info(f"Semáforo async de metadata recriado: {_current_limit} → {max_concurrent} requisições simultâneas")
+                    logger.info(f"[Semaforo] metadata async recriado: {_current_limit} → {max_concurrent} requisicoes simultaneas")
                 else:
-                    logger.info(f"Semáforo async de metadata criado com limite de {max_concurrent} requisições simultâneas")
+                    logger.info(f"[Semaforo] metadata async criado com limite de {max_concurrent} requisicoes simultaneas")
                 _metadata_semaphore = asyncio.Semaphore(max_concurrent)
                 _current_limit = max_concurrent
     
@@ -104,7 +104,7 @@ async def metadata_slot_async(timeout=None):
                         cache_info = ""
                         if _cache_hits > 0 or _cache_misses > 0:
                             cache_info = f" | Cache: {_cache_hits} HIT / {_cache_misses} MISS"
-                        logger.debug(f"[METADATA ASYNC] Batch concluído: {total_requests} requisições | Tempo médio: {avg_time:.2f}s | Mín: {min_time:.2f}s | Máx: {max_time:.2f}s{cache_info}")
+                        logger.debug(f"[METADATA ASYNC] Batch concluido: {total_requests} requisicoes | Tempo medio: {avg_time:.2f}s | Min: {min_time:.2f}s | Max: {max_time:.2f}s{cache_info}")
                         _times_list.clear()  # Limpa para o próximo batch
                         _cache_hits = 0
                         _cache_misses = 0

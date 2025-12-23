@@ -171,6 +171,10 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                 request_timeout = 10 if 't.co' in current_url else timeout
                 
                 try:
+                    # Adiciona pequeno delay entre redirects para evitar detecção
+                    if redirect_count > 0:
+                        time.sleep(0.3)
+                    
                     response = session.get(
                         current_url,
                         allow_redirects=False,
@@ -178,11 +182,15 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                         headers={
                             'Referer': base_url if redirect_count == 0 else current_url,
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
                             'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-                            'Accept-Encoding': 'gzip, deflate',
+                            'Accept-Encoding': 'gzip, deflate, br',
                             'Connection': 'keep-alive',
-                            'Upgrade-Insecure-Requests': '1'
+                            'Upgrade-Insecure-Requests': '1',
+                            'Sec-Fetch-Dest': 'document',
+                            'Sec-Fetch-Mode': 'navigate',
+                            'Sec-Fetch-Site': 'none' if redirect_count == 0 else 'same-origin',
+                            'Cache-Control': 'max-age=0'
                         }
                     )
                 except requests.exceptions.ReadTimeout:

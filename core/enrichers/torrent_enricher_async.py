@@ -517,7 +517,7 @@ class TorrentEnricherAsync:
                     continue
                 else:
                     # Não tem ambos valores, prossegue para scrape
-                    logger.debug(f"[Tracker] Buscando tracker: {log_id} → Não encontrado")
+                    logger.debug(f"[Tracker] Buscando: {log_id} → Não encontrado")
             else:
                 # Não encontrou no cross-data, prossegue para scrape
                 logger.debug(f"[Tracker] Buscando tracker: {log_id} → Não encontrado")
@@ -588,9 +588,9 @@ class TorrentEnricherAsync:
                     log_id = " ".join(log_parts) if log_parts else f"hash: {info_hash}"
                     
                     if saved_to_redis:
-                        logger.debug(f"[Tracker] Buscando tracker: {log_id} → Salvo no Redis")
+                        logger.debug(f"[Tracker] Buscando: {log_id} → Salvo no Redis")
                     else:
-                        logger.debug(f"[Tracker] Buscando tracker: {log_id} → Scrape realizado (erro ao salvar no Redis)")
+                        logger.debug(f"[Tracker] Buscando: {log_id} → Scrape realizado (erro ao salvar no Redis)")
         except Exception:
             pass
 

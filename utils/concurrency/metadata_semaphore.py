@@ -34,9 +34,9 @@ def get_metadata_semaphore():
             # Double-check locking pattern
             if _metadata_semaphore is None or _current_limit != max_concurrent:
                 if _metadata_semaphore is not None:
-                    logger.info(f"Semáforo de metadata recriado: {_current_limit} → {max_concurrent} requisições simultâneas")
+                    logger.info(f"[Semaforo] metadata recriado: {_current_limit} → {max_concurrent} requisicoes simultaneas")
                 else:
-                    logger.info(f"Semáforo de metadata criado com limite de {max_concurrent} requisições simultâneas")
+                    logger.info(f"[Semaforo] metadata criado com limite de {max_concurrent} requisicoes simultaneas")
                 _metadata_semaphore = threading.Semaphore(max_concurrent)
                 _current_limit = max_concurrent
     
@@ -87,7 +87,7 @@ def metadata_slot(timeout=None):
                     min_time = min(_times_list)
                     max_time = max(_times_list)
                     total_requests = len(_times_list)
-                    logger.debug(f"[SEMÁFORO] Batch concluído: {total_requests} requisições | Tempo médio: {avg_time:.2f}s | Mín: {min_time:.2f}s | Máx: {max_time:.2f}s")
+                    logger.debug(f"[Semaforo] Batch concluido: {total_requests} requisicoes | Tempo medio: {avg_time:.2f}s | Min: {min_time:.2f}s | Max: {max_time:.2f}s")
                     _times_list.clear()  # Limpa para o próximo batch
 
 

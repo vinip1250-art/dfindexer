@@ -1,7 +1,10 @@
 """Copyright (c) 2025 DFlexy"""
 """https://github.com/DFlexy"""
 
+import ipaddress
+import socket
 from typing import Optional
+from urllib.parse import urlparse
 from app.config import Config
 
 
@@ -109,4 +112,137 @@ def get_aiohttp_proxy_url() -> Optional[str]:
         URL do proxy ou None se não configurado
     """
     return get_proxy_url()
+
+
+def is_proxy_local() -> bool:
+    """
+    Verifica se o proxy está na mesma rede local que o FlareSolverr.
+    
+    Returns:
+        True se o proxy é local (mesma rede), False caso contrário
+    """
+    if not Config.PROXY_HOST:
+        return False
+    
+    # Extrai host do FlareSolverr
+    flaresolverr_host = None
+    if Config.FLARESOLVERR_ADDRESS:
+        try:
+            parsed = urlparse(Config.FLARESOLVERR_ADDRESS)
+            flaresolverr_host = parsed.hostname or parsed.netloc.split(':')[0] if ':' in parsed.netloc else parsed.netloc
+        except Exception:
+            pass
+    
+    proxy_host = str(Config.PROXY_HOST).strip()
+    
+    # Se não tem FlareSolverr configurado, assume que proxy não é local
+    if not flaresolverr_host:
+        return False
+    
+    # Se são o mesmo hostname/IP, é local
+    if proxy_host.lower() == flaresolverr_host.lower():
+        return True
+    
+    # Tenta resolver para IP e comparar
+    try:
+        # Resolve proxy_host para IP
+        proxy_ip = socket.gethostbyname(proxy_host)
+        
+        # Resolve flaresolverr_host para IP
+        flaresolverr_ip = socket.gethostbyname(flaresolverr_host)
+        
+        # Se são o mesmo IP, é local
+        if proxy_ip == flaresolverr_ip:
+            return True
+        
+        # Verifica se são IPs privados na mesma subnet
+        try:
+            proxy_ip_obj = ipaddress.ip_address(proxy_ip)
+            flaresolverr_ip_obj = ipaddress.ip_address(flaresolverr_ip)
+            
+            # Verifica se são IPs privados
+            is_proxy_private = proxy_ip_obj.is_private
+            is_flaresolverr_private = flaresolverr_ip_obj.is_private
+            
+            # Se ambos são privados, verifica se estão na mesma subnet /24
+            if is_proxy_private and is_flaresolverr_private:
+                # Compara os primeiros 3 octetos (subnet /24)
+                proxy_network = '.'.join(proxy_ip.split('.')[:3])
+                flaresolverr_network = '.'.join(flaresolverr_ip.split('.')[:3])
+                if proxy_network == flaresolverr_network:
+                    return True
+        except (ValueError, AttributeError):
+            pass
+        
+    except (socket.gaierror, socket.herror, OSError):
+        # Não conseguiu resolver, assume que não é local
+        pass
+    
+    return False
+
+
+def should_use_proxy_for_url(url: str) -> bool:
+    """
+    Verifica se deve usar proxy para acessar uma URL específica.
+    Se a URL e o proxy estão na mesma rede local, não usa proxy.
+    
+    Args:
+        url: URL a ser acessada (ex: http://172.30.0.254:7006)
+        
+    Returns:
+        True se deve usar proxy, False caso contrário
+    """
+    if not Config.PROXY_HOST:
+        return False
+    
+    try:
+        parsed = urlparse(url)
+        url_host = parsed.hostname or parsed.netloc.split(':')[0] if ':' in parsed.netloc else parsed.netloc
+        
+        if not url_host:
+            return True  # Se não conseguiu extrair host, usa proxy por segurança
+        
+        proxy_host = str(Config.PROXY_HOST).strip()
+        
+        # Se são o mesmo hostname/IP, não usa proxy
+        if proxy_host.lower() == url_host.lower():
+            return False
+        
+        # Tenta resolver para IP e comparar
+        try:
+            url_ip = socket.gethostbyname(url_host)
+            proxy_ip = socket.gethostbyname(proxy_host)
+            
+            # Se são o mesmo IP, não usa proxy
+            if url_ip == proxy_ip:
+                return False
+            
+            # Verifica se são IPs privados na mesma subnet
+            try:
+                url_ip_obj = ipaddress.ip_address(url_ip)
+                proxy_ip_obj = ipaddress.ip_address(proxy_ip)
+                
+                # Verifica se são IPs privados
+                is_url_private = url_ip_obj.is_private
+                is_proxy_private = proxy_ip_obj.is_private
+                
+                # Se ambos são privados, verifica se estão na mesma subnet /24
+                if is_url_private and is_proxy_private:
+                    # Compara os primeiros 3 octetos (subnet /24)
+                    url_network = '.'.join(url_ip.split('.')[:3])
+                    proxy_network = '.'.join(proxy_ip.split('.')[:3])
+                    if url_network == proxy_network:
+                        return False
+            except (ValueError, AttributeError):
+                pass
+            
+        except (socket.gaierror, socket.herror, OSError):
+            # Não conseguiu resolver, usa proxy por segurança
+            pass
+        
+    except Exception:
+        # Em caso de erro, usa proxy por segurança
+        pass
+    
+    return True
 

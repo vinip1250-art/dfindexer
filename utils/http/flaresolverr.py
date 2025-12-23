@@ -10,7 +10,7 @@ import requests
 from cache.redis_client import get_redis_client
 from cache.redis_keys import flaresolverr_session_key, flaresolverr_created_key, flaresolverr_session_creation_failure_key
 from app.config import Config
-from utils.http.proxy import get_proxy_dict
+from utils.http.proxy import get_proxy_url, get_proxy_dict, is_proxy_local
 
 logger = logging.getLogger(__name__)
 
@@ -141,8 +141,17 @@ class FlareSolverrClient:
                 "session": session_id
             }
             
-            # Configura proxy se disponível
-            proxy_dict = get_proxy_dict()
+            # Adiciona proxy ao payload se disponível (para FlareSolverr usar ao fazer requisições aos sites)
+            proxy_url = get_proxy_url()
+            if proxy_url:
+                payload["proxy"] = proxy_url
+            
+            # Usa proxy para acessar FlareSolverr apenas se o proxy NÃO for local
+            # Se o proxy for local (mesma rede), não usa proxy para acessar FlareSolverr
+            proxy_dict = None
+            if not is_proxy_local():
+                proxy_dict = get_proxy_dict()
+            
             response = requests.post(
                 self.api_url,
                 json=payload,
@@ -191,8 +200,10 @@ class FlareSolverrClient:
                                             "cmd": "sessions.destroy",
                                             "session": created_session_id
                                         }
-                                        # Configura proxy se disponível
-                                        proxy_dict = get_proxy_dict()
+                                        # Usa proxy para acessar FlareSolverr apenas se o proxy NÃO for local
+                                        proxy_dict = None
+                                        if not is_proxy_local():
+                                            proxy_dict = get_proxy_dict()
                                         requests.post(
                                             self.api_url,
                                             json=destroy_payload,
@@ -266,8 +277,10 @@ class FlareSolverrClient:
                 "cmd": "sessions.list"
             }
             
-            # Configura proxy se disponível
-            proxy_dict = get_proxy_dict()
+            # Usa proxy para acessar FlareSolverr apenas se o proxy NÃO for local
+            proxy_dict = None
+            if not is_proxy_local():
+                proxy_dict = get_proxy_dict()
             response = requests.post(
                 self.api_url,
                 json=payload,
@@ -424,8 +437,17 @@ class FlareSolverrClient:
                 "maxTimeout": 60000
             }
             
-            # Configura proxy se disponível
-            proxy_dict = get_proxy_dict()
+            # Adiciona proxy ao payload se disponível (para FlareSolverr usar ao fazer requisições aos sites)
+            proxy_url = get_proxy_url()
+            if proxy_url:
+                payload["proxy"] = proxy_url
+            
+            # Usa proxy para acessar FlareSolverr apenas se o proxy NÃO for local
+            # Se o proxy for local (mesma rede), não usa proxy para acessar FlareSolverr
+            proxy_dict = None
+            if not is_proxy_local():
+                proxy_dict = get_proxy_dict()
+            
             response = requests.post(
                 self.api_url,
                 json=payload,
@@ -568,8 +590,10 @@ class FlareSolverrClient:
                 "session": session_id
             }
             
-            # Configura proxy se disponível
-            proxy_dict = get_proxy_dict()
+            # Usa proxy para acessar FlareSolverr apenas se o proxy NÃO for local
+            proxy_dict = None
+            if not is_proxy_local():
+                proxy_dict = get_proxy_dict()
             requests.post(
                 self.api_url,
                 json=payload,
