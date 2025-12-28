@@ -6,7 +6,13 @@ import re
 # Lista de stop words utilizada para filtrar termos irrelevantes em buscas
 STOP_WORDS = [
     'the', 'my', 'a', 'an', 'and', 'of', 'to', 'in', 'for', 'or', 'as',
-    'os', 'o', 'e', 'de', 'do', 'da', 'em', 'que', 'temporada', 'season'
+    'os', 'o', 'e', 'de', 'do', 'da', 'em', 'que', 'temporada', 'season',
+    # Artigos italianos
+    'gli', 'dei', 'del', 'della', 'delle', 'degli', 'dello', 'dall', 'dalla', 'dalle', 'dallo', 'dall\'',
+    # Artigos espanhóis
+    'los', 'las', 'del', 'de', 'el', 'la',
+    # Artigos franceses
+    'les', 'des', 'du', 'de', 'le', 'la'
 ]
 
 # Expressão regular para remover domínios e tags comuns em títulos

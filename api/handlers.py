@@ -169,10 +169,13 @@ def indexer_handler(site_name: str = None):
                     
                     total_unique = len(unique_hashes)
                     
-                    # Formato: Query: '...' | Filter: True/False | Total: X | Filtrados: Y | Aprovados: Z
+                    # Formato: Query: '...' | Filter: True/False | Total: X | Rejeitados: Y | Aprovados: Z
                     query_display = query if query else ''
                     filter_status = 'True' if query and query.strip() else 'False'
-                    logger.info(f"{log_prefix}  Query: '{query_display}' | Filter: {filter_status} | Total: {total_unique} | Filtrados: {filter_stats['filtered']} | Aprovados: {total_unique}")
+                    total_stats = filter_stats.get('total', total_unique) if filter_stats else total_unique
+                    filtered_stats = filter_stats.get('filtered', 0) if filter_stats else 0
+                    approved_stats = filter_stats.get('approved', total_unique) if filter_stats else total_unique
+                    logger.info(f"{log_prefix}  Query: '{query_display}' | Filter: {filter_status} | Total: {total_stats} | Rejeitados: {filtered_stats} | Aprovados: {approved_stats}")
                 else:
                     # Conta hashes únicos (ignora duplicados do mesmo scraper)
                     unique_hashes = set()
@@ -183,10 +186,10 @@ def indexer_handler(site_name: str = None):
                     
                     total_unique = len(unique_hashes)
                     
-                    # Formato: Query: '...' | Filter: True/False | Total: X | Filtrados: Y | Aprovados: Z
+                    # Formato: Query: '...' | Filter: True/False | Total: X | Rejeitados: Y | Aprovados: Z
                     query_display = query if query else ''
                     filter_status = 'True' if query and query.strip() else 'False'
-                    logger.info(f"{log_prefix}  Query: '{query_display}' | Filter: {filter_status} | Total: {total_unique} | Filtrados: 0 | Aprovados: {total_unique}")
+                    logger.info(f"{log_prefix}  Query: '{query_display}' | Filter: {filter_status} | Total: {total_unique} | Rejeitados: 0 | Aprovados: {total_unique}")
         else:
             # Busca em TODOS os scrapers quando não especificado
             log_prefix = "[TODOS]"
@@ -235,11 +238,14 @@ def indexer_handler(site_name: str = None):
                             total_unique = len(unique_hashes_in_scraper)
                             
                             # Log individual por scraper - mostra apenas únicos (sem duplicados internos)
-                            # Formato: Query: '...' | Filter: True/False | Total: X | Filtrados: Y | Aprovados: Z
+                            # Formato: Query: '...' | Filter: True/False | Total: X | Rejeitados: Y | Aprovados: Z
                             if total_unique > 0:
                                 query_display = query if query else ''
                                 filter_status = 'True' if query and query.strip() else 'False'
-                                logger.info(f"{log_prefix} [{scraper_label}]  Query: '{query_display}' | Filter: {filter_status} | Total: {total_unique} | Filtrados: {scraper_stats.get('filtered', 0)} | Aprovados: {total_unique}")
+                                total_stats = scraper_stats.get('total', total_unique) if scraper_stats else total_unique
+                                filtered_stats = scraper_stats.get('filtered', 0) if scraper_stats else 0
+                                approved_stats = scraper_stats.get('approved', total_unique) if scraper_stats else total_unique
+                                logger.info(f"{log_prefix} [{scraper_label}]  Query: '{query_display}' | Filter: {filter_status} | Total: {total_stats} | Rejeitados: {filtered_stats} | Aprovados: {approved_stats}")
                         if scraper_torrents:
                             logger.info(f"{log_prefix} [{scraper_label}] Encontrados: {len(scraper_torrents)} resultados")
                 except Exception as e:
@@ -257,7 +263,7 @@ def indexer_handler(site_name: str = None):
             # Combina estatísticas de todos os scrapers
             # Log apenas após processamento completo e quando há resultados
             if torrents:
-                # Formato: Query: '...' | Filter: True/False | Total: X | Filtrados: Y | Aprovados: Z
+                # Formato: Query: '...' | Filter: True/False | Total: X | Rejeitados: Y | Aprovados: Z
                 query_display = query if query else ''
                 filter_status = 'True' if query and query.strip() else 'False'
                 if all_filter_stats:
@@ -270,9 +276,9 @@ def indexer_handler(site_name: str = None):
                         'approved': approved_combined,
                         'scraper_name': 'TODOS'
                     }
-                    logger.info(f"{log_prefix}  Query: '{query_display}' | Filter: {filter_status} | Total: {filter_stats['total']} | Filtrados: {filter_stats['filtered']} | Aprovados: {filter_stats['approved']}")
+                    logger.info(f"{log_prefix}  Query: '{query_display}' | Filter: {filter_status} | Total: {filter_stats['total']} | Rejeitados: {filter_stats['filtered']} | Aprovados: {filter_stats['approved']}")
                 else:
-                    logger.info(f"{log_prefix}  Query: '{query_display}' | Filter: {filter_status} | Total: {len(torrents)} | Filtrados: 0 | Aprovados: {len(torrents)}")
+                    logger.info(f"{log_prefix}  Query: '{query_display}' | Filter: {filter_status} | Total: {len(torrents)} | Rejeitados: 0 | Aprovados: {len(torrents)}")
                     filter_stats = None
             else:
                 filter_stats = None
@@ -280,6 +286,9 @@ def indexer_handler(site_name: str = None):
         # Validação final: garante que todos os resultados tenham campos obrigatórios
         # Remove resultados inválidos que não podem ser exibidos no Prowlarr
         valid_torrents = []
+        removed_count = 0
+        removed_details = []
+        
         for torrent in torrents:
             # Campos obrigatórios para Prowlarr
             has_title = torrent.get('title') or torrent.get('title_processed')
@@ -289,13 +298,40 @@ def indexer_handler(site_name: str = None):
             
             # Se faltar algum campo crítico, remove o resultado
             if not has_title or not has_magnet or not has_info_hash or not has_details:
-                logger.debug(f"{log_prefix if 'log_prefix' in locals() else '[UNKNOWN]'} Removendo resultado inválido (faltam campos obrigatórios): title={bool(has_title)}, magnet={bool(has_magnet)}, info_hash={bool(has_info_hash)}, details={bool(has_details)}")
+                removed_count += 1
+                title_preview = (torrent.get('title') or torrent.get('title_processed') or 'N/A')[:60]
+                missing_fields = []
+                if not has_title:
+                    missing_fields.append('title')
+                if not has_magnet:
+                    missing_fields.append('magnet')
+                if not has_info_hash:
+                    missing_fields.append('info_hash')
+                if not has_details:
+                    missing_fields.append('details')
+                
+                removed_details.append(f"{title_preview} (faltam: {', '.join(missing_fields)})")
+                logger.warning(f"{log_prefix if 'log_prefix' in locals() else '[UNKNOWN]'} Removendo resultado inválido: {title_preview} | Faltam campos: {', '.join(missing_fields)}")
                 continue
             
             valid_torrents.append(torrent)
         
+        # Log resumo se resultados foram removidos
+        if removed_count > 0:
+            logger.warning(f"{log_prefix if 'log_prefix' in locals() else '[UNKNOWN]'} {removed_count} resultados removidos na validação final. Antes: {len(torrents) + removed_count}, Depois: {len(valid_torrents)}")
+            if removed_details:
+                for detail in removed_details[:5]:  # Mostra até 5 exemplos
+                    logger.warning(f"{log_prefix if 'log_prefix' in locals() else '[UNKNOWN]'}   - {detail}")
+        
         # Atualiza lista de torrents com apenas os válidos
         torrents = valid_torrents
+        
+        # Log detalhado dos resultados antes de retornar
+        if torrents and filter_stats and filter_stats.get('approved', 0) > len(torrents):
+            logger.warning(f"{log_prefix if 'log_prefix' in locals() else '[UNKNOWN]'} DISCREPÂNCIA: {filter_stats.get('approved', 0)} aprovados pelo filtro, mas apenas {len(torrents)} resultados válidos após validação final")
+            # Lista os títulos dos resultados que estão sendo retornados
+            titles_list = [t.get('title') or t.get('title_processed', 'N/A')[:50] for t in torrents]
+            logger.info(f"{log_prefix if 'log_prefix' in locals() else '[UNKNOWN]'} Resultados que serão retornados ({len(torrents)}): {', '.join(titles_list)}")
         
         response_data = {
             'results': torrents,

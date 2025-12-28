@@ -512,74 +512,31 @@ class ComandScraper(BaseScraper):
             original_title = page_title
         
         # Extrai informações de áudio e legenda do HTML
-        audio_info = None  # Para detectar áudio/idioma do HTML
+        audio_info = ''  # Para detectar áudio/idioma do HTML
         audio_html_content = ''  # Armazena HTML completo para verificação adicional
         all_paragraphs_html = []  # Coleta HTML de todos os parágrafos
         
-        audio_text = ''
-        legenda = ''
-        
         if entry_content:
-            # Primeiro tenta no HTML completo do entry_content
+            # Primeiro tenta no HTML completo do entry_content (mais eficiente)
             content_html = str(entry_content)
             all_paragraphs_html.append(content_html)
             
-            # Extrai Áudio/Idioma - busca primeiro no HTML completo
-            # O site pode usar "Áudio:" ou "Idioma:" para indicar o idioma do áudio
-            audio_patterns = [
-                r'(?i)Áudio\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|</span|Legenda|Canais|Fansub|Qualidade|Duração|Formato|Vídeo|Nota|Tamanho|IMDb|Status|$)',
-                r'(?i)Audio\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|</span|Legenda|Canais|Fansub|Qualidade|Duração|Formato|Vídeo|Nota|Tamanho|IMDb|Status|$)',
-                r'(?i)Idioma\s*:\s*([^<\n\r]+?)(?:<br|</div|</p|</span|Legenda|Canais|Fansub|Qualidade|Duração|Formato|Vídeo|Nota|Tamanho|IMDb|Status|$)',
-                r'(?i)<[^>]*>Áudio\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|Legenda|$)',
-                r'(?i)<[^>]*>Audio\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|Legenda|$)',
-                r'(?i)<[^>]*>Idioma\s*:\s*</[^>]*>([^<\n\r]+?)(?:<br|</div|</p|Legenda|$)',
-            ]
-            
-            for pattern in audio_patterns:
-                audio_match = re.search(pattern, content_html, re.DOTALL)
-                if audio_match:
-                    audio_text = audio_match.group(1).strip()
-                    # Remove entidades HTML e tags
-                    audio_text = html.unescape(audio_text)
-                    audio_text = re.sub(r'<[^>]+>', '', audio_text).strip()
-                    # Remove espaços extras e normaliza
-                    audio_text = re.sub(r'\s+', ' ', audio_text).strip()
-                    # Para antes de encontrar palavras de parada
-                    stop_words = ['Legenda', 'Canais', 'Fansub', 'Qualidade', 'Duração', 'Formato', 'Vídeo', 'Nota', 'Tamanho', 'IMDb', 'Status']
-                    for stop_word in stop_words:
-                        if stop_word in audio_text:
-                            idx = audio_text.index(stop_word)
-                            audio_text = audio_text[:idx].strip()
-                            break
-                    if audio_text:
-                        break
+            # Extrai informação de áudio/idioma usando função utilitária (mesma lógica do starck)
+            from utils.parsing.audio_extraction import detect_audio_from_html
+            audio_info = detect_audio_from_html(content_html)
             
             # Se não encontrou no HTML completo, busca nos elementos individuais
-            if not audio_text:
-                for elem in entry_content.find_all(['p', 'span', 'div', 'strong', 'em', 'li', 'b']):
-                    elem_html = str(elem)
-                    all_paragraphs_html.append(elem_html)
-                    
-                    for pattern in audio_patterns:
-                        audio_match = re.search(pattern, elem_html, re.DOTALL)
-                        if audio_match:
-                            audio_text = audio_match.group(1).strip()
-                            # Remove entidades HTML e tags
-                            audio_text = html.unescape(audio_text)
-                            audio_text = re.sub(r'<[^>]+>', '', audio_text).strip()
-                            # Remove espaços extras e normaliza
-                            audio_text = re.sub(r'\s+', ' ', audio_text).strip()
-                            # Para antes de encontrar palavras de parada
-                            stop_words = ['Legenda', 'Canais', 'Fansub', 'Qualidade', 'Duração', 'Formato', 'Vídeo', 'Nota', 'Tamanho', 'IMDb', 'Status']
-                            for stop_word in stop_words:
-                                if stop_word in audio_text:
-                                    idx = audio_text.index(stop_word)
-                                    audio_text = audio_text[:idx].strip()
-                                    break
-                            if audio_text:
-                                break
-                    if audio_text:
+            if not audio_info:
+                for p in entry_content.find_all(['p', 'span', 'div', 'strong', 'em', 'li', 'b']):
+                    html_content = str(p)
+                    all_paragraphs_html.append(html_content)
+                    audio_info = detect_audio_from_html(html_content)
+                    if audio_info:
                         break
+            
+            # Concatena HTML de todos os parágrafos para verificação adicional
+            if all_paragraphs_html:
+                audio_html_content = ' '.join(all_paragraphs_html)
             
             # Extrai legenda usando função dedicada
             from utils.parsing.legend_extraction import extract_legenda_from_page, determine_legend_info
@@ -587,49 +544,6 @@ class ComandScraper(BaseScraper):
             
             # Determina legend_info baseado na legenda extraída
             legend_info = determine_legend_info(legenda) if legenda else None
-            
-            # Concatena HTML de todos os parágrafos para verificação adicional
-            if all_paragraphs_html:
-                audio_html_content = ' '.join(all_paragraphs_html)
-                # Se extraiu legenda mas não está no HTML, adiciona explicitamente
-                if legenda and 'Legenda' not in audio_html_content and 'legenda' not in audio_html_content.lower():
-                    audio_html_content += f' Legenda: {legenda}'
-            
-            # Determina audio_info baseado apenas em Áudio (legenda será tratada separadamente)
-            # Suporta múltiplos idiomas: "Português, Inglês" ou "Português, Japonês" (máximo 3)
-            if audio_text:
-                audio_lower = audio_text.lower()
-                
-                # Lista de idiomas detectados
-                idiomas_detectados = []
-                
-                # Verifica se tem português no áudio (PT-BR é considerado português)
-                if ('português' in audio_lower or 'portugues' in audio_lower or 
-                    'pt-br' in audio_lower or 'ptbr' in audio_lower or 
-                    'pt br' in audio_lower):
-                    idiomas_detectados.append('português')
-                # Verifica se tem Inglês no áudio
-                if 'inglês' in audio_lower or 'ingles' in audio_lower or 'english' in audio_lower or 'en' in audio_lower:
-                    idiomas_detectados.append('inglês')
-                # Verifica se tem Japonês no áudio
-                if 'japonês' in audio_lower or 'japones' in audio_lower or 'japanese' in audio_lower or 'jap' in audio_lower:
-                    idiomas_detectados.append('japonês')
-                
-                # Limita a 3 idiomas no máximo
-                idiomas_detectados = idiomas_detectados[:3]
-                
-                # Determina audio_info baseado nos idiomas detectados
-                if len(idiomas_detectados) >= 2:
-                    # Se tem 2 ou mais idiomas, usa 'dual' (português + outro)
-                    if 'português' in idiomas_detectados and 'inglês' in idiomas_detectados:
-                        audio_info = 'dual'  # Português + Inglês
-                    elif 'português' in idiomas_detectados:
-                        audio_info = 'dual'  # Português + outro idioma
-                    else:
-                        # Se não tem português mas tem múltiplos, usa o primeiro
-                        audio_info = idiomas_detectados[0]
-                elif len(idiomas_detectados) == 1:
-                    audio_info = idiomas_detectados[0]
         
         # Extrai links magnet - busca TODOS os links <a> no entry-content
         # A função _resolve_link automaticamente identifica e resolve links protegidos
@@ -735,7 +649,9 @@ class ComandScraper(BaseScraper):
                 
                 # Determina origem_audio_tag
                 origem_audio_tag = 'N/A'
-                if magnet_original and ('dual' in magnet_original.lower() or 'dublado' in magnet_original.lower() or 'legendado' in magnet_original.lower()):
+                if audio_info:
+                    origem_audio_tag = f'HTML da página (detect_audio_from_html)'
+                elif magnet_original and ('dual' in magnet_original.lower() or 'dublado' in magnet_original.lower() or 'legendado' in magnet_original.lower()):
                     origem_audio_tag = 'magnet_processed'
                 elif missing_dn and info_hash:
                     origem_audio_tag = 'metadata (iTorrents.org) - usado durante processamento'

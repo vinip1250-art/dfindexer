@@ -107,19 +107,12 @@ class TorrentEnricher:
             original_title = torrent.get('original_title', '')
             title_translated = torrent.get('title_translated_processed', '')
             
-            # OTIMIZAÇÃO: Só busca metadata se:
-            # 1. Título está vazio (< 10 caracteres)
-            # 2. E não temos original_title nem title_translated_processed (necessários para o filtro)
-            # 3. E não foi marcado como já buscado (_metadata_fetched)
-            # Isso evita buscas desnecessárias antes do filtro quando já temos dados suficientes
-            needs_metadata_for_filter = (
-                (not title or len(title.strip()) < 10) and
-                not original_title and
-                not title_translated and
-                not torrent.get('_metadata_fetched')
-            )
-            
-            if needs_metadata_for_filter and info_hash:
+            # IMPORTANTE: Garante que title_processed esteja completo ANTES do filtro
+            # O filtro usa title_processed, então ele precisa estar preenchido corretamente
+            # Se title_processed está vazio ou muito curto (< 10 caracteres), tenta buscar metadata
+            # mesmo que não tenha original_title nem title_translated_processed
+            # (o filtro precisa de title_processed para funcionar corretamente)
+            if (not title or len(title.strip()) < 10) and info_hash and not torrent.get('_metadata_fetched'):
                 try:
                     # Verifica cache primeiro para evitar busca desnecessária
                     from cache.metadata_cache import MetadataCache

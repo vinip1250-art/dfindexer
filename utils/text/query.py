@@ -170,6 +170,7 @@ def check_query_match(query: str, title: str, title_original_html: str = '', tit
 
          
     # Verifica se o ano corresponde (importante para filmes)
+    # NOTA: Para séries, o ano pode não estar no título, então não é obrigatório
     year_in_query = None
     for word in clean_query_words:
         if word.isdigit() and len(word) == 4 and word.startswith(('19', '20')):
@@ -177,6 +178,10 @@ def check_query_match(query: str, title: str, title_original_html: str = '', tit
             break
     
     year_in_title = False
+    # Verifica se é série (tem padrão SxxExx ou Sxx)
+    # IMPORTANTE: Verifica no título original (title) que é onde o padrão SxxExx aparece com pontos
+    is_series = bool(re.search(r'(?i)s\d{1,2}e\d{1,2}|s\d{1,2}(?:\s|$|\.)', title))
+    
     if year_in_query:
         # Verifica ano no título (aceita pontos ou espaços ao redor, já que pontos foram convertidos para espaços)
         year_pattern = r'\b' + re.escape(year_in_query) + r'\b'
@@ -222,9 +227,19 @@ def check_query_match(query: str, title: str, title_original_html: str = '', tit
             # OU se pelo menos 30% do total fizeram match
             min_matches_percent = max(2, int(total_words * 0.3))
             if first_words_matches >= 2 or matches >= min_matches_percent:
-                # Se o ano corresponde e há matches suficientes E pelo menos 1 é palavra de título, aceita
-                if year_in_title and has_title_match:
-                    return True
+                # IMPORTANTE: Para queries longas, se as palavras principais do título fizeram match,
+                # aceita mesmo que algumas palavras (especialmente de outros idiomas) não façam match
+                # Isso resolve casos como "percy jackson e gli dei dellolimpo temporada 2" onde
+                # "percy" e "jackson" fazem match, mas "gli", "dei", "dellolimpo" não (estão em italiano)
+                if has_title_match:
+                    # Se há match de palavras de título E (ano corresponde OU não há ano na query OU é série), aceita
+                    # Séries podem não ter o ano no título, então é mais flexível
+                    if not year_in_query or year_in_title or is_series:
+                        return True
+                    # Se há ano na query mas não corresponde, ainda aceita se matches suficientes
+                    # (pode ser que o ano esteja no título mas não foi detectado)
+                    if matches >= min_matches_percent:
+                        return True
                 # Caso contrário, exige pelo menos 1 palavra de título
                 return has_title_match
             
@@ -236,28 +251,43 @@ def check_query_match(query: str, title: str, title_original_html: str = '', tit
         title_words_count = len(title_words_in_query)
         
         # Conta matches de palavras de título (não ano, não temporada)
+        # IMPORTANTE: Temporadas que fazem match (ex: "1" → "S01") também contam como match válido
         title_word_matches = sum(1 for w in matched_words if not w.isdigit() or len(w) >= 3)
         
+        # Verifica se há match de temporada (número de 1-2 dígitos que corresponde a Sxx)
+        season_match_count = 0
+        for word in clean_query_words:
+            if word.isdigit() and len(word) <= 2:
+                # Verifica se este número corresponde a uma temporada no título
+                season_patterns = [f"s{word}", f"s{word.zfill(2)}"]
+                if any(sp in title_normalized for sp in season_patterns):
+                    season_match_count += 1
+        
+        # Total de matches válidos = palavras de título + temporadas que fizeram match
+        total_valid_matches = title_word_matches + season_match_count
+        
         # Para queries de 3 palavras: exige que TODAS as palavras não numéricas façam match
-        # E se houver ano na query, ele DEVE corresponder exatamente
+        # E se houver ano na query, ele DEVE corresponder exatamente (exceto para séries)
         if total_words == 3:
-            # Todas as palavras de título devem fazer match
-            if title_word_matches < title_words_count:
+            # Todas as palavras de título devem fazer match (incluindo temporada se houver)
+            if total_valid_matches < title_words_count:
                 return False
-            # Se há ano na query, ele DEVE corresponder exatamente
-            if year_in_query and not year_in_title:
+            # Se há ano na query, ele DEVE corresponder exatamente (mas não para séries)
+            # Séries podem não ter o ano no título, então é mais flexível
+            if year_in_query and not year_in_title and not is_series:
                 return False
             # Todas as condições atendidas
             return True
         
-        # Para queries de 4 palavras: exige pelo menos 3 matches de palavras de título
-        # E se houver ano na query, ele DEVE corresponder exatamente
+        # Para queries de 4 palavras: exige pelo menos 3 matches válidos (palavras de título + temporada)
+        # E se houver ano na query, ele DEVE corresponder exatamente (exceto para séries)
         if total_words == 4:
-            # Pelo menos 3 palavras de título devem fazer match
-            if title_word_matches < 3:
+            # Pelo menos 3 matches válidos devem fazer match (palavras de título + temporada)
+            if total_valid_matches < 3:
                 return False
-            # Se há ano na query, ele DEVE corresponder exatamente
-            if year_in_query and not year_in_title:
+            # Se há ano na query, ele DEVE corresponder exatamente (mas não para séries)
+            # Séries podem não ter o ano no título, então é mais flexível
+            if year_in_query and not year_in_title and not is_series:
                 return False
             # Todas as condições atendidas
             return True

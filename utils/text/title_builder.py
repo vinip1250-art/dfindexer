@@ -80,8 +80,35 @@ def prepare_release_title(
         from utils.text.cleaning import clean_title
         normalized = clean_title(normalized)
         
+        # IMPORTANTE: Extrai informações técnicas de dentro dos colchetes ANTES de removê-los
+        # Padrões técnicos que podem estar em colchetes: [720p], [1080p], [WEBRip], [WEB-DL], [x264], [H264], etc.
+        technical_in_brackets = []
+        
+        # Busca padrões técnicos dentro de colchetes
+        bracket_patterns = [
+            r'\[(1080p|720p|480p|2160p|4K|UHD|FHD|FULLHD|HD|SD|HDR)\]',  # Qualidades
+            r'\[(WEB-DL|WEBRip|BluRay|DVDRip|HDRip|HDTV|BDRip|BRRip|CAMRip|CAM|TSRip|TS|TC|R5|SCR|DVDScr)\]',  # Fontes
+            r'\[(x264|x265|H\.264|H\.265|H264|H265|AVC|HEVC)\]',  # Codecs
+            r'\[(DUAL|DUBLADO|DDP5\.1|Atmos|AC3|AAC|MP3|FLAC|DTS|NACIONAL|Legendado)\]',  # Áudio
+        ]
+        
+        for pattern in bracket_patterns:
+            matches = re.finditer(pattern, normalized, re.IGNORECASE)
+            for match in matches:
+                technical_in_brackets.append(match.group(1))  # Adiciona o conteúdo técnico encontrado
+        
         # Remove tags entre colchetes (ex: [EA], [rich_jc], etc.)
+        # Mas preserva informações técnicas que foram extraídas acima
         normalized = re.sub(r'\[[^\]]*\]', '', normalized)
+        
+        # Adiciona informações técnicas extraídas dos colchetes de volta ao normalized
+        if technical_in_brackets:
+            # Normaliza espaços para pontos e adiciona as informações técnicas
+            normalized = re.sub(r'\s+', '.', normalized.strip())
+            if normalized:
+                normalized += '.' + '.'.join(technical_in_brackets)
+            else:
+                normalized = '.'.join(technical_in_brackets)
         
         # Remove parênteses mas preserva o conteúdo dentro deles (normaliza espaços para pontos)
         # Ex: "(BDRip 1080p x264)" -> "BDRip.1080p.x264"
@@ -279,8 +306,35 @@ def create_standardized_title(title_original_html: str, year: str, magnet_proces
         return result
     clean_release = remove_accents(clean_release)
     
+    # IMPORTANTE: Extrai informações técnicas de dentro dos colchetes ANTES de removê-los
+    # Padrões técnicos que podem estar em colchetes: [720p], [1080p], [WEBRip], [WEB-DL], [x264], [H264], etc.
+    technical_in_brackets = []
+    
+    # Busca padrões técnicos dentro de colchetes
+    bracket_patterns = [
+        r'\[(1080p|720p|480p|2160p|4K|UHD|FHD|FULLHD|HD|SD|HDR)\]',  # Qualidades
+        r'\[(WEB-DL|WEBRip|BluRay|DVDRip|HDRip|HDTV|BDRip|BRRip|CAMRip|CAM|TSRip|TS|TC|R5|SCR|DVDScr)\]',  # Fontes
+        r'\[(x264|x265|H\.264|H\.265|H264|H265|AVC|HEVC)\]',  # Codecs
+        r'\[(DUAL|DUBLADO|DDP5\.1|Atmos|AC3|AAC|MP3|FLAC|DTS|NACIONAL|Legendado)\]',  # Áudio
+    ]
+    
+    for pattern in bracket_patterns:
+        matches = re.finditer(pattern, clean_release, re.IGNORECASE)
+        for match in matches:
+            technical_in_brackets.append(match.group(1))  # Adiciona o conteúdo técnico encontrado
+    
     # Remove tags entre colchetes (ex: [EA], [rich_jc], etc.)
+    # Mas preserva informações técnicas que foram extraídas acima
     clean_release = re.sub(r'\[[^\]]*\]', '', clean_release)
+    
+    # Adiciona informações técnicas extraídas dos colchetes de volta ao clean_release
+    if technical_in_brackets:
+        # Normaliza espaços para pontos e adiciona as informações técnicas
+        clean_release = re.sub(r'\s+', '.', clean_release.strip())
+        if clean_release:
+            clean_release += '.' + '.'.join(technical_in_brackets)
+        else:
+            clean_release = '.'.join(technical_in_brackets)
     
     # Remove parênteses mas preserva o conteúdo dentro deles (normaliza espaços para pontos)
     # Ex: "(BDRip 1080p x264)" -> "BDRip.1080p.x264"
@@ -565,8 +619,12 @@ def create_standardized_title(title_original_html: str, year: str, magnet_proces
         # - Qualidades: 1080p, 720p, 2160p, 4K, HD, FHD, UHD, FULLHD, etc.
         elif re.match(r'^(1080p|720p|480p|2160p|4K|HD|FHD|UHD|SD|HDR|FULLHD)$', part_clean, re.IGNORECASE):
             technical_parts.append(part_clean)
-        # - Codecs: x264, x265, H.264, H.265, etc.
-        elif re.match(r'^(x264|x265|H\.264|H\.265|AVC|HEVC)$', part_clean, re.IGNORECASE):
+        # - Codecs: x264, x265, H.264, H.265, H264, H265, etc.
+        # Normaliza H264/H265 para H.264/H.265 antes de adicionar
+        elif re.match(r'^(x264|x265|H\.264|H\.265|H264|H265|AVC|HEVC)$', part_clean, re.IGNORECASE):
+            # Normaliza H264/H265 para H.264/H.265
+            if re.match(r'^H(264|265)$', part_clean, re.IGNORECASE):
+                part_clean = f'H.{part_clean[1:]}'  # Converte H264 -> H.264
             technical_parts.append(part_clean)
         # - Fontes: WEB-DL, WEBRip, BluRay, DVDRip, HDRip, HDTV, BDRip, BRRip, etc.
         elif re.match(r'^(WEB-DL|WEBRip|BluRay|DVDRip|HDRip|HDTV|BDRip|BRRip|CAMRip|CAM|TSRip|TS|TC|R5|SCR|DVDScr)$', part_clean, re.IGNORECASE):

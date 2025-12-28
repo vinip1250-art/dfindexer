@@ -445,18 +445,47 @@ def detect_audio_from_html(html_content: str) -> Optional[str]:
     if not html_content:
         return None
     
-    # Verifica se tem "Português" no áudio/idioma
-    has_portugues = re.search(r'(?i)(?:Áudio|Idioma)\s*:?\s*.*Português', html_content)
+    # Remove tags HTML para análise de texto (mas mantém o HTML original para regex)
+    # Isso ajuda a detectar padrões mesmo quando há tags HTML entre as palavras
+    text_content = re.sub(r'<[^>]+>', ' ', html_content)
+    text_content = re.sub(r'\s+', ' ', text_content)
+    
+    # Verifica se tem "Idioma:" ou "Áudio:" no HTML
+    has_idioma_label = re.search(r'(?i)(?:Áudio|Idioma)\s*:?', html_content)
+    has_legenda_label = re.search(r'(?i)Legenda\s*:?', html_content)
+    
+    # Verifica se tem "Português" no contexto de áudio/idioma (considera tags HTML)
+    # Procura por "Idioma:" ou "Áudio:" seguido de "Português" (com ou sem tags HTML no meio)
+    has_portugues = re.search(r'(?i)(?:Áudio|Idioma)\s*:?\s*(?:<[^>]+>)*\s*.*?Português', html_content, re.DOTALL)
+    # Também verifica no texto sem tags
+    if not has_portugues:
+        has_portugues = re.search(r'(?i)(?:Áudio|Idioma)\s*:?\s*.*?Português', text_content)
+    
     has_multi = re.search(r'(?i)Multi-?Áudio|Multi-?Audio', html_content)
-    # Verifica se tem "Inglês" no áudio/idioma (não apenas na legenda)
-    has_ingles_audio = re.search(r'(?i)(?:Áudio|Idioma)\s*:?\s*.*(?:Inglês|Ingles|English)', html_content)
+    
+    # Verifica se tem "Inglês" no contexto de áudio/idioma (considera tags HTML)
+    # Procura por "Idioma:" ou "Áudio:" seguido de "Inglês" (com ou sem tags HTML no meio)
+    has_ingles_audio = re.search(r'(?i)(?:Áudio|Idioma)\s*:?\s*(?:<[^>]+>)*\s*.*?(?:Inglês|Ingles|English)', html_content, re.DOTALL)
+    # Também verifica no texto sem tags
+    if not has_ingles_audio:
+        has_ingles_audio = re.search(r'(?i)(?:Áudio|Idioma)\s*:?\s*.*?(?:Inglês|Ingles|English)', text_content)
+    
+    # Verifica se tem "Inglês" em qualquer lugar (fallback)
     has_ingles = re.search(r'(?i)Inglês|Ingles|English', html_content)
     
-    # Verifica se tem "Legendado" na legenda (sem português no áudio)
-    has_legenda_legendado = re.search(r'(?i)Legenda\s*:?\s*.*Legendado', html_content)
-    has_legenda_ingles = re.search(r'(?i)Legenda\s*:?\s*.*(?:Inglês|Ingles|English)', html_content)
-    # Verifica se tem português na legenda (PT-BR, Português, etc.)
-    has_legenda_portugues = re.search(r'(?i)Legenda\s*:?\s*.*(?:PT-BR|PTBR|Português|Portugues|PT)', html_content)
+    # Verifica se tem "Legendado" na legenda (considera tags HTML)
+    has_legenda_legendado = re.search(r'(?i)Legenda\s*:?\s*(?:<[^>]+>)*\s*.*?Legendado', html_content, re.DOTALL)
+    if not has_legenda_legendado:
+        has_legenda_legendado = re.search(r'(?i)Legenda\s*:?\s*.*?Legendado', text_content)
+    
+    has_legenda_ingles = re.search(r'(?i)Legenda\s*:?\s*(?:<[^>]+>)*\s*.*?(?:Inglês|Ingles|English)', html_content, re.DOTALL)
+    if not has_legenda_ingles:
+        has_legenda_ingles = re.search(r'(?i)Legenda\s*:?\s*.*?(?:Inglês|Ingles|English)', text_content)
+    
+    # Verifica se tem português na legenda (PT-BR, Português, etc.) - considera tags HTML
+    has_legenda_portugues = re.search(r'(?i)Legenda\s*:?\s*(?:<[^>]+>)*\s*.*?(?:PT-BR|PTBR|Português|Portugues|PT)', html_content, re.DOTALL)
+    if not has_legenda_portugues:
+        has_legenda_portugues = re.search(r'(?i)Legenda\s*:?\s*.*?(?:PT-BR|PTBR|Português|Portugues|PT)', text_content)
     
     # Se tem português no áudio
     if has_portugues:
@@ -467,9 +496,22 @@ def detect_audio_from_html(html_content: str) -> Optional[str]:
             # Apenas português
             return 'português'
     
-    # Se tem inglês no áudio/idioma E legenda em português → legendado (mas também indica inglês)
-    if has_ingles_audio and has_legenda_portugues:
-        return 'legendado'  # Será tratado como legendado, mas add_audio_tag_if_needed detectará inglês
+    # Se tem inglês no contexto de idioma/áudio
+    if has_ingles_audio:
+        # Se tem legenda em português, retorna 'legendado' (mas add_audio_tag_if_needed detectará inglês)
+        if has_legenda_portugues:
+            return 'legendado'
+        # Caso contrário, retorna None (será tratado por add_audio_tag_if_needed via audio_html_content)
+        return None
+    
+    # Fallback: Se tem label de "Idioma:" ou "Áudio:" e "Inglês" no mesmo contexto HTML
+    # (para casos onde a regex anterior não capturou devido a tags HTML)
+    if has_idioma_label and has_ingles:
+        # Se tem legenda em português, retorna 'legendado'
+        if has_legenda_portugues:
+            return 'legendado'
+        # Caso contrário, retorna None (será tratado por add_audio_tag_if_needed via audio_html_content)
+        return None
     
     # Se não tem português no áudio, mas tem legendado na legenda (PT-BR, Legendado, ou Inglês)
     if has_legenda_legendado or has_legenda_portugues or (has_legenda_ingles and not has_portugues):
@@ -588,6 +630,12 @@ def add_audio_tag_if_needed(title: str, magnet_processed: str, info_hash: Option
                         has_eng_audio = True
         except Exception:
             pass
+    
+    # FALLBACK 4: audio_html_content (verifica HTML diretamente quando audio_info não detectou)
+    if audio_html_content and not has_eng_audio:
+        # Verifica se tem "Idioma: Inglês" ou "Áudio: Inglês" no HTML
+        if re.search(r'(?i)(?:Áudio|Idioma)\s*:?\s*(?:<[^>]+>)*\s*.*?(?:Inglês|Ingles|English)', audio_html_content, re.DOTALL):
+            has_eng_audio = True
     
     # ============================================================================
     # TAG [Jap]

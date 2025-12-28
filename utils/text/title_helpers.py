@@ -154,6 +154,9 @@ def _split_technical_components(text: str) -> str:
     # Preserva anos completos (2021, 2023, 2024, etc.) antes de processar
     result = re.sub(r'\b(19|20)\d{2}\b', replace_year, result)
     
+    # Primeiro, normaliza H264/H265 para H.264/H.265 (adiciona ponto se não tiver)
+    result = re.sub(r'\bH(264|265)\b', r'H.\1', result, flags=re.IGNORECASE)
+    
     # Primeiro, separa codecs seguidos de hífens e release groups (ex: x265-ELiTE -> x265.-ELiTE)
     # Isso garante que codecs sejam separados corretamente mesmo quando seguidos de hífens
     # O hífen será substituído por ponto depois em _extract_technical_info
@@ -168,7 +171,8 @@ def _split_technical_components(text: str) -> str:
         # IMPORTANTE: Não adiciona pontos se já está separado por ponto (ex: .1080p. já está correto)
         (r'(?<!\.)(?<!E)(2160p|1080p|720p|480p|4K|UHD|FHD|FULLHD|HD|SD|HDR)(?!\.)', r'.\1.', re.IGNORECASE),
         # Codecs (já processados acima, mas mantém para casos sem hífen)
-        (r'(?<!\.)(x264|x265|H\.264|H\.265|AVC|HEVC)(?!\.)', r'.\1.', re.IGNORECASE),
+        # Suporta tanto H.264 quanto H264 (sem ponto)
+        (r'(?<!\.)(x264|x265|H\.264|H\.265|H264|H265|AVC|HEVC)(?!\.)', r'.\1.', re.IGNORECASE),
         # Áudio
         (r'(?<!\.)(DUAL|DUBLADO|DDP5\.1|Atmos|AC3|AAC|MP3|FLAC|DTS|NACIONAL|Legendado|DTS-HD|TrueHD)(?!\.)', r'.\1.', re.IGNORECASE),
         # Formatos
@@ -417,7 +421,7 @@ def _reorder_title_components(title: str) -> str:
         'BRRIP', 'CAMRIP', 'CAM', 'TSRIP', 'TS', 'TC', 'R5', 'SCR', 'DVDSCR'
     }
     codec_tokens = {
-        'X264', 'X265', 'H.264', 'H.265', 'AVC', 'HEVC'
+        'X264', 'X265', 'H.264', 'H.265', 'H264', 'H265', 'AVC', 'HEVC'
     }
     audio_tokens = {
         'DUAL', 'DUBLADO', 'DDP5.1', 'ATMOS', 'AC3', 'AAC', 'MP3', 'FLAC', 'DTS', 'NACIONAL', 'LEGENDADO'
@@ -546,8 +550,10 @@ def _reorder_title_components(title: str) -> str:
                 source_parts.append(normalized_source)
             structure_started = True
             continue
-        elif upper_part in codec_tokens or re.match(r'^(x264|x265|H\.264|H\.265|AVC|HEVC)$', clean_part, re.IGNORECASE):
-            # Codec: x264, x265, etc. (normaliza para minúsculas)
+        elif upper_part in codec_tokens or re.match(r'^(x264|x265|H\.264|H\.265|H264|H265|AVC|HEVC)$', clean_part, re.IGNORECASE):
+            # Codec: x264, x265, etc. (normaliza H264/H265 para H.264/H.265 e depois para minúsculas)
+            if re.match(r'^H(264|265)$', clean_part, re.IGNORECASE):
+                clean_part = f'H.{clean_part[1:]}'  # Converte H264 -> H.264
             normalized_codec = clean_part.lower()
             if normalized_codec not in [c.lower() for c in codec_parts]:
                 codec_parts.append(clean_part)

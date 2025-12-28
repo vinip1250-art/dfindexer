@@ -56,14 +56,16 @@ class IndexerServiceAsync:
         
         # IMPORTANTE: Aplica filtro automaticamente quando há query para evitar resultados irrelevantes
         # Os sites retornam muitos resultados que não correspondem à busca, então o filtro é essencial
+        # NOTA: NÃO passa filter_func para scraper.search() aqui porque o filtro será aplicado
+        # no enricher async. Isso evita aplicar o filtro duas vezes (no scraper e no enricher).
         filter_func = None
         if query:
             # Sempre aplica filtro quando há query, independente de filter_results
             # Isso garante que apenas resultados relevantes sejam retornados
             filter_func = QueryFilter.create_filter(query)
         
-        # Busca com filtro se filter_results=True, caso contrário sem filtro
-        torrents = scraper.search(query, filter_func=filter_func)
+        # Busca SEM filtro - o filtro será aplicado no enricher async para evitar duplicação
+        torrents = scraper.search(query, filter_func=None)
         
         # Limita ANTES do enriquecimento para economizar processamento de metadata/trackers
         if max_results and max_results > 0:

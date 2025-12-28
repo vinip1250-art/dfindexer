@@ -135,6 +135,66 @@ class StarckScraper(BaseScraper):
         
         return links
     
+    def _search_variations(self, query: str) -> List[str]:
+        """
+        Busca com variações da query, mas filtra resultados claramente irrelevantes.
+        """
+        from urllib.parse import urljoin, quote
+        from utils.text.constants import STOP_WORDS
+        
+        links = []
+        seen_urls = set()
+        variations = [query]
+        
+        # Remove stop words
+        words = [w for w in query.split() if w.lower() not in STOP_WORDS]
+        if words and ' '.join(words) != query:
+            variations.append(' '.join(words))
+        
+        # Primeira palavra (apenas se não for stop word e query tiver 2 palavras)
+        query_words = query.split()
+        if len(query_words) > 1 and len(query_words) < 3:
+            first_word = query_words[0].lower()
+            if first_word not in STOP_WORDS:
+                variations.append(query_words[0])
+        
+        # Normaliza query para comparação (remove stop words e acentos)
+        query_normalized = ' '.join([w.lower() for w in query.split() if w.lower() not in STOP_WORDS])
+        query_keywords = set([w for w in query_normalized.split() if len(w) > 2])
+        
+        for variation in variations:
+            search_url = f"{self.base_url}{self.search_url}{quote(variation)}"
+            doc = self.get_document(search_url, self.base_url)
+            if not doc:
+                continue
+            
+            # Extrai links usando o método específico do scraper
+            page_links = self._extract_search_results(doc)
+            
+            # Filtra links claramente irrelevantes antes de adicionar
+            for href in page_links:
+                absolute_url = urljoin(self.base_url, href)
+                
+                # Verifica duplicatas
+                if absolute_url in seen_urls:
+                    continue
+                
+                # Filtro básico: verifica se a URL ou título tem palavras-chave da query
+                # Extrai palavras da URL (remove hífens, pontos, etc)
+                url_words = set([w.lower() for w in href.replace('-', ' ').replace('.', ' ').split() if len(w) > 2])
+                
+                # Verifica se há palavras em comum entre a query e a URL
+                common_words = query_keywords.intersection(url_words)
+                
+                # Se não tem palavras em comum relevantes, pula (é claramente irrelevante)
+                if not common_words:
+                    continue
+                
+                links.append(absolute_url)
+                seen_urls.add(absolute_url)
+        
+        return links
+    
     # Extrai torrents de uma página
     def _get_torrents_from_page(self, link: str) -> List[Dict]:
         # Garante que o link seja absoluto para o campo details
@@ -296,7 +356,10 @@ class StarckScraper(BaseScraper):
                                 magnet_links.append(decoded_magnet)
         
         if not magnet_links:
-            logger.debug("[Starck] ❌ Nenhum magnet encontrado após todas as tentativas")
+            # Não loga se a página claramente não tem relação com a busca
+            # (o filtro vai remover esses resultados mesmo)
+            # Só loga se for uma página que DEVERIA ter magnets mas não tem
+            # Para identificar problemas reais de extração
             return []
         
         # Processa cada magnet

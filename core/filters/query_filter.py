@@ -1,8 +1,11 @@
 """Copyright (c) 2025 DFlexy"""
 """https://github.com/DFlexy"""
 
+import logging
 from typing import Dict, Callable
 from utils.text.query import check_query_match
+
+logger = logging.getLogger(__name__)
 
 
 class QueryFilter:
@@ -13,12 +16,37 @@ class QueryFilter:
             return lambda t: True
         
         def filter_func(torrent: Dict) -> bool:
-            return check_query_match(
+            title_processed = torrent.get('title_processed', '')
+            original_title = torrent.get('original_title', '')
+            title_translated = torrent.get('title_translated_processed', '')
+            
+            result = check_query_match(
                 query,
-                torrent.get('title_processed', ''),
-                torrent.get('original_title', ''),
-                torrent.get('title_translated_processed', '')
+                title_processed,
+                original_title,
+                title_translated
             )
+            
+            # Log detalhado quando resultado é aprovado
+            if result:
+                logger.debug(f"Resultado Aprovado: Query='{query[:50]}' | Title='{title_processed[:60]}' | Original='{original_title[:40]}' | Translated='{title_translated[:40]}'")
+            else:
+                # Log detalhado quando resultado é rejeitado, mas apenas se parecer relevante
+                # (evita logar resultados claramente irrelevantes como "What If" quando busca "percy jackson")
+                # Verifica se o título tem alguma palavra em comum com a query (para evitar logs de resultados totalmente irrelevantes)
+                query_words = set(query.lower().split())
+                title_words = set((title_processed + ' ' + original_title + ' ' + title_translated).lower().split())
+                
+                # Se não tem nenhuma palavra em comum, não loga (é claramente irrelevante)
+                common_words = query_words.intersection(title_words)
+                # Remove stop words e palavras muito curtas
+                common_words = {w for w in common_words if len(w) > 2 and w not in ['the', 'and', 'of', 'a', 'an', 'in', 'on', 'at', 'to', 'for', 'de', 'da', 'do', 'e', 'o', 'a', 'os', 'as']}
+                
+                # Só loga se tiver pelo menos 1 palavra em comum (pode ser relevante mas foi filtrado por outro motivo)
+                if common_words:
+                    logger.debug(f"Resultado Rejeitado: Query='{query[:50]}' | Title='{title_processed[:60]}' | Original='{original_title[:40]}' | Translated='{title_translated[:40]}'")
+            
+            return result
         
         return filter_func
 

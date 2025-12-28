@@ -53,36 +53,29 @@ class IndexerService:
         # Busca com filtro se filter_results=True, caso contrário sem filtro
         torrents = scraper.search(query, filter_func=filter_func)
         
+        # Calcula estatísticas do filtro - faz cópia imediatamente para evitar race condition
+        # IMPORTANTE: Coleta ANTES de limitar resultados, para ter estatísticas corretas
+        filter_stats = None
+        if hasattr(scraper, '_enricher') and scraper._enricher:
+            if hasattr(scraper._enricher, '_last_filter_stats'):
+                # Faz cópia imediata das estatísticas para evitar que sejam sobrescritas por outras requisições
+                stats = scraper._enricher._last_filter_stats
+                # Verifica se as estatísticas são válidas
+                if stats and isinstance(stats, dict):
+                    # Cria cópia profunda para evitar race condition entre requisições simultâneas
+                    # IMPORTANTE: Coleta ANTES de qualquer outra operação que possa sobrescrever
+                    filter_stats = {
+                        'total': stats.get('total', 0),
+                        'filtered': stats.get('filtered', 0),
+                        'approved': stats.get('approved', 0),
+                        'scraper_name': stats.get('scraper_name', '')
+                    }
+        
+        
         # Limita ANTES do enriquecimento para economizar processamento de metadata/trackers
+        # IMPORTANTE: Limita DEPOIS de coletar as estatísticas, para não afetar a contagem
         if max_results and max_results > 0:
             torrents = torrents[:max_results]
-        
-        # Calcula estatísticas do filtro - faz cópia imediatamente para evitar race condition
-        filter_stats = None
-        if hasattr(scraper, '_enricher') and hasattr(scraper._enricher, '_last_filter_stats'):
-            # Faz cópia imediata das estatísticas para evitar que sejam sobrescritas por outras requisições
-            stats = scraper._enricher._last_filter_stats
-            if stats:
-                # Cria cópia profunda para evitar race condition entre requisições simultâneas
-                # IMPORTANTE: Coleta ANTES de qualquer outra operação que possa sobrescrever
-                filter_stats = {
-                    'total': stats.get('total', 0),
-                    'filtered': stats.get('filtered', 0),
-                    'approved': stats.get('approved', 0),
-                    'scraper_name': stats.get('scraper_name', '')
-                }
-        elif filter_func and torrents:
-            # Fallback: calcula estatísticas manualmente se não foram calculadas pelo enricher
-            total_before_filter = len(torrents)
-            filtered_count = sum(1 for t in torrents if not filter_func(t))
-            approved_count = total_before_filter - filtered_count
-            
-            filter_stats = {
-                'total': total_before_filter,
-                'filtered': filtered_count,
-                'approved': approved_count,
-                'scraper_name': scraper.SCRAPER_TYPE if hasattr(scraper, 'SCRAPER_TYPE') else ''
-                }
         
         self.processor.sanitize_torrents(torrents)
         self.processor.remove_internal_fields(torrents)
