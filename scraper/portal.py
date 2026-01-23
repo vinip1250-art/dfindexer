@@ -27,7 +27,7 @@ _log_ctx = ScraperLogContext("Portal", logger)
 # Scraper específico para Portal Filmes
 class PortalScraper(BaseScraper):
     SCRAPER_TYPE = "portal"
-    DEFAULT_BASE_URL = "https://portalfilmes.com/"
+    DEFAULT_BASE_URL = "https://baixafilmestorrent.org/"
     DISPLAY_NAME = "Portal"
     
     def __init__(self, base_url: Optional[str] = None, use_flaresolverr: bool = False):
@@ -42,60 +42,34 @@ class PortalScraper(BaseScraper):
     # Extrai links da página inicial - busca apenas "Últimos Adicionados!"
     def _extract_links_from_page(self, doc: BeautifulSoup) -> List[str]:
         links = []
-        
-        # Encontra a seção "Últimos Adicionados!"
-        ultimos_h2 = None
-        for h2 in doc.find_all('h2', class_='titulo-bloco'):
-            if 'Últimos Adicionados' in h2.get_text():
-                ultimos_h2 = h2
-                break
-        
-        if ultimos_h2:
-            # Encontra o container pai (section.filmes)
-            section = ultimos_h2.find_parent('section', class_='filmes')
-            if section:
-                # Pega todos os links dentro de .listagem > article.item > a
-                listagem = section.find('div', class_='listagem')
-                if listagem:
-                    for item in listagem.find_all('article', class_='item'):
-                        link_elem = item.find('a')
-                        if link_elem:
-                            href = link_elem.get('href')
-                            if href:
-                                # Converte URL relativa para absoluta
-                                absolute_url = urljoin(self.base_url, href)
-                                links.append(absolute_url)
-        
-        # Fallback: Se não encontrou a seção específica, usa seletores genéricos
-        if not links:
-            _log_ctx.info("Seção 'Últimos Adicionados!' não encontrada - usando fallback genérico")
-            
-            # Tenta primeiro os seletores específicos do site (estrutura da página inicial)
-            for item in doc.select('.listagem .item a'):
-                href = item.get('href')
-                if href:
-                    absolute_url = urljoin(self.base_url, href)
-                    links.append(absolute_url)
-            
-            # Se não encontrou com seletor específico, tenta alternativos
-            if not links:
-                for item in doc.select('div.listagem div.item a'):
-                    href = item.get('href')
+    
+        blocos_desejados = [
+            'Últimos Filmes Adicionados',
+            'Últimas Séries Adicionadas'
+        ]
+    
+        for h2 in doc.find_all('h2', class_='block-title'):
+            titulo = h2.get_text(strip=True)
+    
+            if any(b in titulo for b in blocos_desejados):
+                # O container vem logo depois do h2
+                container = h2.find_parent('div', class_='container')
+                if not container:
+                    continue
+    
+                # Busca artigos dentro da listagem
+                for article in container.select('article.col a[href]'):
+                    href = article.get('href')
                     if href:
-                        absolute_url = urljoin(self.base_url, href)
-                        links.append(absolute_url)
-            
-            # Fallback: tenta seletores WordPress comuns
-            if not links:
-                for article in doc.select('article.post'):
-                    link_elem = article.select_one('h2.entry-title a, h1.entry-title a, header.entry-header a')
-                    if link_elem:
-                        href = link_elem.get('href')
-                        if href:
-                            absolute_url = urljoin(self.base_url, href)
-                            links.append(absolute_url)
-        
-        return links
+                        links.append(urljoin(self.base_url, href))
+    
+        # 🔁 Fallback se nada foi achado
+        if not links:
+            _log_ctx.info("Blocos 'Últimos Filmes/Séries' não encontrados – usando fallback")
+            for a in doc.select('.movies-list a[href], .series-list a[href]'):
+                links.append(urljoin(self.base_url, a.get('href')))
+    
+        return list(dict.fromkeys(links))
     
     # Obtém torrents de uma página específica
     def get_page(self, page: str = '1', max_items: Optional[int] = None, is_test: bool = False) -> List[Dict]:
