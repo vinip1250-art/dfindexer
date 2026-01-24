@@ -6,7 +6,7 @@ import re
 import logging
 from datetime import datetime
 from utils.parsing.date_extraction import parse_date_from_string
-from typing import List, Dict, Optional, Callable
+from typing import List, Dict, Optional, Callable, Tuple
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from scraper.base import BaseScraper
@@ -39,54 +39,154 @@ class PortalScraper(BaseScraper):
     def search(self, query: str, filter_func: Optional[Callable[[Dict], bool]] = None) -> List[Dict]:
         return self._default_search(query, filter_func)
     
-    # Extrai links da página inicial - busca apenas "Últimos Adicionados!"
-    def _extract_links_from_page(self, doc: BeautifulSoup) -> List[str]:
-        links = []
-    
-        blocos_desejados = [
-            'Últimos Filmes Adicionados',
-            'Últimas Séries Adicionadas'
-        ]
-    
+    # Extrai links da página inicial (lógica especial para separar filmes e séries)
+    def _extract_links_from_page(self, doc: BeautifulSoup) -> Tuple[List[str], List[str]]:
+        # Separa links de filmes e séries dentro das seções específicas
+        filmes_links = []
+        series_links = []
+        
+        # Encontra a seção "Últimos Filmes Adicionados"
+        filmes_h2 = None
         for h2 in doc.find_all('h2', class_='block-title'):
-            titulo = h2.get_text(strip=True)
-    
-            if any(b in titulo for b in blocos_desejados):
-                # O container vem logo depois do h2
-                container = h2.find_parent('div', class_='container')
-                if not container:
-                    continue
-    
-                # Busca artigos dentro da listagem
-                for article in container.select('article.col a[href]'):
-                    href = article.get('href')
+            if 'Últimos Filmes Adicionados' in h2.get_text():
+                filmes_h2 = h2
+                break
+        
+        if filmes_h2:
+            # Encontra o container pai (div.block-header)
+            block_header_filmes = filmes_h2.find_parent('div', class_='block-header')
+            if block_header_filmes:
+                # Pega o próximo div.movies-list que vem depois deste block-header
+                movies_list = block_header_filmes.find_next_sibling('div', class_='movies-list')
+                if not movies_list:
+                    # Se não encontrar como sibling direto, busca o próximo na árvore
+                    movies_list = block_header_filmes.find_next('div', class_='movies-list')
+                
+                if movies_list:
+                    for item in movies_list.select('article.col .item .image a, article.col .item .title a'):
+                        href = item.get('href')
+                        if href:
+                            # Converte URL relativa para absoluta
+                            absolute_url = urljoin(self.base_url, href)
+                            if absolute_url not in filmes_links:
+                                filmes_links.append(absolute_url)
+        
+        # Encontra a seção "Últimas Séries Adicionadas"
+        series_h2 = None
+        for h2 in doc.find_all('h2', class_='block-title'):
+            if 'Últimas Séries Adicionadas' in h2.get_text():
+                series_h2 = h2
+                break
+        
+        if series_h2:
+            # Encontra o container pai (div.block-header)
+            block_header_series = series_h2.find_parent('div', class_='block-header')
+            if block_header_series:
+                # Pega o próximo div.movies-list que vem depois deste block-header
+                movies_list = block_header_series.find_next_sibling('div', class_='movies-list')
+                if not movies_list:
+                    # Se não encontrar como sibling direto, busca o próximo na árvore
+                    movies_list = block_header_series.find_next('div', class_='movies-list')
+                
+                if movies_list:
+                    for item in movies_list.select('article.col .item .image a, article.col .item .title a'):
+                        href = item.get('href')
+                        if href:
+                            # Converte URL relativa para absoluta
+                            absolute_url = urljoin(self.base_url, href)
+                            if absolute_url not in series_links:
+                                series_links.append(absolute_url)
+        
+        # Fallback: Se não encontrou as seções específicas, usa seletores genéricos
+        if not filmes_links and not series_links:
+            _log_ctx.info("Seções específicas não encontradas - usando fallback genérico")
+            
+            # Busca em todas as movies-list da página
+            for movies_list in doc.select('div.movies-list'):
+                for item in movies_list.select('article.col .item .image a, article.col .item .title a'):
+                    href = item.get('href')
                     if href:
-                        links.append(urljoin(self.base_url, href))
+                        absolute_url = urljoin(self.base_url, href)
+                        # Coloca todos no filmes_links como fallback
+                        if absolute_url not in filmes_links:
+                            filmes_links.append(absolute_url)
+        
+        # Retorna tupla com filmes e séries separados
+        return (filmes_links, series_links)
     
-        # 🔁 Fallback se nada foi achado
-        if not links:
-            _log_ctx.info("Blocos 'Últimos Filmes/Séries' não encontrados – usando fallback")
-            for a in doc.select('.movies-list a[href], .series-list a[href]'):
-                links.append(urljoin(self.base_url, a.get('href')))
-    
-        return list(dict.fromkeys(links))
-    
-    # Obtém torrents de uma página específica
+    # Obtém torrents de uma página específica (usa helper padrão com extração customizada)
     def get_page(self, page: str = '1', max_items: Optional[int] = None, is_test: bool = False) -> List[Dict]:
-        return self._default_get_page(page, max_items, is_test=is_test)
+        # Prepara flags de teste/metadata/trackers (centralizado no BaseScraper)
+        is_using_default_limit, skip_metadata, skip_trackers = self._prepare_page_flags(max_items, is_test=is_test)
+        
+        try:
+            # Constrói URL da página usando função utilitária
+            from utils.concurrency.scraper_helpers import (
+                build_page_url, get_effective_max_items, limit_list,
+                process_links_parallel
+            )
+            page_url = build_page_url(self.base_url, self.page_pattern, page)
+            
+            doc = self.get_document(page_url, self.base_url)
+            if not doc:
+                return []
+            
+            # Extrai links usando método específico do scraper (retorna tupla separada)
+            filmes_links, series_links = self._extract_links_from_page(doc)
+            
+            # Obtém limite efetivo usando função utilitária
+            effective_max = get_effective_max_items(max_items)
+            
+            # Quando há limite configurado, coleta metade de cada seção
+            # Caso contrário, coleta todos de ambas as seções
+            if effective_max > 0:
+                # Calcula metade do limite para cada seção
+                half_limit = max(1, effective_max // 2)
+                
+                # Limita cada seção à metade
+                filmes_links = limit_list(filmes_links, half_limit)
+                series_links = limit_list(series_links, half_limit)
+                
+                _log_ctx.info(f"Limite configurado: {effective_max} - Coletando {len(filmes_links)} filmes e {len(series_links)} séries")
+                links = filmes_links + series_links
+            else:
+                # Sem limite, combina todos os links
+                links = filmes_links + series_links
+            
+            # Usa processamento paralelo centralizado (mantém ordem original automaticamente)
+            # NÃO passa limite de torrents - o limite já foi aplicado nos links acima
+            all_torrents = process_links_parallel(
+                links,
+                self._get_torrents_from_page,
+                None,  # Sem limite de torrents - processa todos os links limitados
+                scraper_name=self.SCRAPER_TYPE if hasattr(self, 'SCRAPER_TYPE') else None,
+                use_flaresolverr=self.use_flaresolverr
+            )
+            
+            # Enriquece torrents (usa flags preparadas pelo BaseScraper)
+            enriched = self.enrich_torrents(
+                all_torrents,
+                skip_metadata=skip_metadata,
+                skip_trackers=skip_trackers
+            )
+            # Retorna todos os magnets encontrados (sem limite nos resultados finais)
+            return enriched
+        finally:
+            self._skip_metadata = False
+            self._is_test = False
     
     # Extrai links dos resultados de busca (usa implementação base de _search_variations)
     def _extract_search_results(self, doc: BeautifulSoup) -> List[str]:
         links = []
-        # Tenta primeiro os seletores específicos do site (estrutura da página inicial)
-        for item in doc.select('.listagem .item a'):
+        # Tenta primeiro os seletores específicos do site (estrutura da nova página)
+        for item in doc.select('.movies-list article.col .item .image a, .movies-list article.col .item .title a'):
             href = item.get('href')
             if href:
                 links.append(href)
         
         # Se não encontrou com seletor específico, tenta alternativos
         if not links:
-            for item in doc.select('div.listagem div.item a'):
+            for item in doc.select('div.movies-list div.item a'):
                 href = item.get('href')
                 if href:
                     links.append(href)
@@ -153,23 +253,48 @@ class PortalScraper(BaseScraper):
         
         # Extrai título original
         original_title = ''
-        # Primeiro tenta buscar no HTML completo do content_div (para pegar casos onde está em tags quebradas)
-        content_html = str(content_div)
-        if re.search(r'(?i)T[íi]tulo\s+Original\s*:?', content_html):
-            # Busca no HTML completo primeiro (mais confiável para tags quebradas)
-            # Tenta padrão com </b> ou </strong>, com : dentro ou fora
-            # Ex: <strong>Título Original</strong>: Valor
-            # Ex: <b>Título Original:</b> Valor
-            html_match = re.search(r'(?i)T[íi]tulo\s+Original\s*:?\s*(?:</b>|</strong>)?\s*:?\s*(.*?)(?:<br\s*/?>|</span|</p|</div|</strong|</b>|$)', content_html, re.DOTALL)
-            
-            if html_match:
-                html_text = html_match.group(1)
-                html_text = re.sub(r'<[^>]+>', '', html_text)
-                html_text = html_text.strip()
-                if html_text:
-                    original_title = html_text
         
-        # Se não encontrou no HTML completo, busca elemento por elemento
+        # PRIMEIRO: Busca em #page-heading span.tempo (estrutura nova do site)
+        page_heading = doc.select_one('#page-heading')
+        if page_heading:
+            tempo_span = page_heading.select_one('span.tempo')
+            if tempo_span:
+                tempo_text = tempo_span.get_text(strip=True)
+                tempo_html = str(tempo_span)
+                # Busca padrão "Título original: The Pitt"
+                if re.search(r'(?i)T[íi]tulo\s+original\s*:?', tempo_text):
+                    # Extrai do texto - pega tudo após "Título original:" até o fim ou próximo campo
+                    text_match = re.search(r'(?i)T[íi]tulo\s+original\s*:?\s*(.+?)(?:\s*$)', tempo_text, re.DOTALL)
+                    if text_match:
+                        original_title = text_match.group(1).strip()
+                    else:
+                        # Tenta do HTML - pega tudo após "Título original:" até </span>
+                        html_match = re.search(r'(?i)T[íi]tulo\s+original\s*:?\s*(.*?)(?:</span|$)', tempo_html, re.DOTALL)
+                        if html_match:
+                            html_text = html_match.group(1)
+                            html_text = re.sub(r'<[^>]+>', '', html_text)
+                            html_text = html_text.strip()
+                            if html_text:
+                                original_title = html_text
+        
+        # SEGUNDO: Busca no HTML completo do content_div (para pegar casos onde está em tags quebradas)
+        if not original_title:
+            content_html = str(content_div)
+            if re.search(r'(?i)T[íi]tulo\s+Original\s*:?', content_html):
+                # Busca no HTML completo primeiro (mais confiável para tags quebradas)
+                # Tenta padrão com </b> ou </strong>, com : dentro ou fora
+                # Ex: <strong>Título Original</strong>: Valor
+                # Ex: <b>Título Original:</b> Valor
+                html_match = re.search(r'(?i)T[íi]tulo\s+Original\s*:?\s*(?:</b>|</strong>)?\s*:?\s*(.*?)(?:<br\s*/?>|</span|</p|</div|</strong|</b>|$)', content_html, re.DOTALL)
+                
+                if html_match:
+                    html_text = html_match.group(1)
+                    html_text = re.sub(r'<[^>]+>', '', html_text)
+                    html_text = html_text.strip()
+                    if html_text:
+                        original_title = html_text
+        
+        # TERCEIRO: Se não encontrou no HTML completo, busca elemento por elemento no content_div
         if not original_title:
             for elem in content_div.find_all(['p', 'span', 'div', 'strong', 'em', 'li']):
                 elem_html = str(elem)
@@ -434,7 +559,8 @@ class PortalScraper(BaseScraper):
         # A função _resolve_link automaticamente identifica e resolve links protegidos
         all_links = doc.select('a[href]')
         
-        magnet_links = []
+        # Armazena tuplas (magnet_link, link_text) para poder usar o texto do link como fallback
+        magnet_links_with_text = []
         for link in all_links:
             href = link.get('href', '')
             if not href:
@@ -443,10 +569,18 @@ class PortalScraper(BaseScraper):
             # Resolve automaticamente (magnet direto ou protegido)
             resolved_magnet = self._resolve_link(href)
             if resolved_magnet and resolved_magnet.startswith('magnet:'):
-                if resolved_magnet not in magnet_links:
-                    magnet_links.append(resolved_magnet)
+                # Extrai o texto do link para usar como fallback quando dn não estiver presente
+                link_text = link.get_text(strip=True)
+                # Remove emoji (🧲) e espaços do início, mantém apenas o texto útil
+                # Usa replace para remover o emoji específico e regex para espaços
+                link_text = link_text.replace('🧲', '').strip()
+                link_text = re.sub(r'^\s+', '', link_text)
+                
+                # Verifica se este magnet já foi adicionado (evita duplicados)
+                if not any(m[0] == resolved_magnet for m in magnet_links_with_text):
+                    magnet_links_with_text.append((resolved_magnet, link_text))
         
-        if not magnet_links:
+        if not magnet_links_with_text:
             return []
         
         # Remove duplicados de tamanhos
@@ -454,7 +588,7 @@ class PortalScraper(BaseScraper):
         
         # Processa cada magnet
         # IMPORTANTE: magnet_link já é o magnet resolvido (links protegidos foram resolvidos antes)
-        for idx, magnet_link in enumerate(magnet_links):
+        for idx, (magnet_link, link_text) in enumerate(magnet_links_with_text):
             try:
                 magnet_data = MagnetParser.parse(magnet_link)
                 info_hash = magnet_data['info_hash']
@@ -481,6 +615,29 @@ class PortalScraper(BaseScraper):
                 # Extrai magnet_original diretamente do display_name do magnet resolvido
                 # NÃO modificar antes de passar para create_standardized_title
                 magnet_original = magnet_data.get('display_name', '')
+                
+                # Se o magnet não tem dn=, verifica se o texto do link é útil
+                # Textos genéricos como "1080p | EPISÓDIO 01 | Dual Áudio" não são bons como magnet_original
+                # Deixa missing_dn=True para usar fallbacks (metadata, cross_data, etc.)
+                if not magnet_original or len(magnet_original.strip()) < 3:
+                    if link_text and len(link_text.strip()) >= 3:
+                        # Limpa o texto do link
+                        cleaned_link_text = link_text.strip()
+                        cleaned_link_text = cleaned_link_text.replace('🧲', '').strip()
+                        cleaned_link_text = re.sub(r'^[\s\-|]+', '', cleaned_link_text)
+                        cleaned_link_text = cleaned_link_text.strip()
+                        
+                        # Verifica se o texto do link parece ser um título válido (não apenas qualidade/episódio)
+                        # Se contém apenas padrões como "1080p | EPISÓDIO 01", não usa como magnet_original
+                        # Deixa missing_dn=True para usar fallbacks
+                        is_generic = bool(re.search(r'^(?:\d+p\s*\|?\s*)?(?:EPIS[ÓO]DIO|EP\.?)\s*\d+', cleaned_link_text, re.IGNORECASE))
+                        is_generic = is_generic or bool(re.search(r'^\d+p\s*\|?\s*Dual\s+Áudio', cleaned_link_text, re.IGNORECASE))
+                        
+                        if not is_generic and len(cleaned_link_text) >= 5:
+                            # Texto parece ser um título válido, usa como magnet_original
+                            magnet_original = cleaned_link_text
+                        # Se for genérico, mantém magnet_original vazio para usar fallbacks
+                
                 missing_dn = not magnet_original or len(magnet_original.strip()) < 3
                 
                 # NOTA: Não busca cross_data aqui para não interferir no fluxo de prepare_release_title()
