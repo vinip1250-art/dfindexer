@@ -488,6 +488,7 @@ class TorrentEnricherAsync:
         scraper_name = getattr(self, '_current_scraper_name', None)
         
         infohash_map = {}
+        log_id_by_hash = {}
         for torrent in torrents:
             info_hash = (torrent.get('info_hash') or '').lower()
             if not info_hash or len(info_hash) != 40:
@@ -515,14 +516,14 @@ class TorrentEnricherAsync:
                 if tracker_seed is not None and tracker_leech is not None:
                     torrent['seed_count'] = tracker_seed
                     torrent['leech_count'] = tracker_leech
-                    # Log removido - hits do Redis são muito comuns
+                    logger.debug(f"[Tracker] Buscando: {log_id} → (S:{tracker_seed} L:{tracker_leech}) cache")
                     continue
                 else:
                     # Não tem ambos valores, prossegue para scrape
-                    logger.debug(f"[Tracker] Buscando: {log_id} → Não encontrado")
+                    pass
             else:
                 # Não encontrou no cross-data, prossegue para scrape
-                logger.debug(f"[Tracker] Buscando tracker: {log_id} → Não encontrado")
+                pass
             
             # Se não encontrou no cross-data, adiciona para fazer scrape
             trackers = torrent.get('trackers') or []
@@ -532,9 +533,13 @@ class TorrentEnricherAsync:
                 if magnet_link:
                     trackers = extract_trackers_from_magnet(magnet_link)
             
+            # Sempre adiciona o info_hash ao mapa, mesmo que a lista de trackers
+            # esteja vazia. O TrackerService usa a lista dinâmica de trackers
+            # como fallback quando não há trackers fornecidos pelo magnet/HTML.
+            infohash_map.setdefault(info_hash, [])
             if trackers:
-                infohash_map.setdefault(info_hash, [])
                 infohash_map[info_hash].extend(trackers)
+            log_id_by_hash[info_hash] = log_id
         
         if not infohash_map:
             return
@@ -548,51 +553,51 @@ class TorrentEnricherAsync:
                     continue
                 
                 leech_seed = peers_map.get(info_hash)
-                if leech_seed:
-                    leech, seed = leech_seed
-                    torrent['leech_count'] = leech
-                    torrent['seed_count'] = seed
-                    
-                    # Salva no TrackerCache se ainda não estiver salvo (garante consistência)
-                    # Isso cobre casos onde (0, 0) foi retornado mas não foi salvo no TrackerCache
-                    try:
-                        from cache.tracker_cache import TrackerCache
-                        tracker_cache = TrackerCache()
-                        # Verifica se já está no cache
-                        cached = tracker_cache.get(info_hash)
-                        if not cached:
-                            # Se não está no cache, salva (mesmo que seja 0, 0 - é sucesso)
-                            tracker_data = {"leech": leech, "seed": seed}
-                            tracker_cache.set(info_hash, tracker_data)
-                    except Exception:
-                        pass
-                    
-                    saved_to_redis = False
-                    try:
-                        cross_data_to_save = {
-                            'tracker_seed': seed,
-                            'tracker_leech': leech
-                        }
-                        save_cross_data_to_redis(info_hash, cross_data_to_save)
-                        saved_to_redis = True
-                    except Exception:
-                        pass
-                    
-                    # Log com resultado da busca e salvamento
-                    log_parts = []
-                    if scraper_name:
-                        log_parts.append(f"[{scraper_name}]")
-                    title = torrent.get('title_processed', '')
-                    if title:
-                        title_preview = title[:120] if len(title) > 120 else title
-                        log_parts.append(title_preview)
-                    log_parts.append(f"(hash: {info_hash})")
-                    log_id = " ".join(log_parts) if log_parts else f"hash: {info_hash}"
-                    
-                    if saved_to_redis:
-                        logger.debug(f"[Tracker] Buscando: {log_id} → Salvo no Redis")
-                    else:
-                        logger.debug(f"[Tracker] Buscando: {log_id} → Scrape realizado (erro ao salvar no Redis)")
+                if not leech_seed:
+                    if info_hash in log_id_by_hash:
+                        logger.debug(f"[Tracker] Buscando: {log_id_by_hash[info_hash]} → Não encontrado")
+                    continue
+                leech, seed = leech_seed
+                torrent['leech_count'] = leech
+                torrent['seed_count'] = seed
+                
+                # Salva no TrackerCache se ainda não estiver salvo (garante consistência)
+                try:
+                    from cache.tracker_cache import TrackerCache
+                    tracker_cache = TrackerCache()
+                    cached = tracker_cache.get(info_hash)
+                    if not cached:
+                        tracker_data = {"leech": leech, "seed": seed}
+                        tracker_cache.set(info_hash, tracker_data)
+                except Exception:
+                    pass
+                
+                saved_to_redis = False
+                try:
+                    cross_data_to_save = {
+                        'tracker_seed': seed,
+                        'tracker_leech': leech
+                    }
+                    save_cross_data_to_redis(info_hash, cross_data_to_save)
+                    saved_to_redis = True
+                except Exception:
+                    pass
+                
+                # Log com resultado da busca e salvamento
+                log_parts = []
+                if scraper_name:
+                    log_parts.append(f"[{scraper_name}]")
+                title = torrent.get('title_processed', '')
+                if title:
+                    title_preview = title[:120] if len(title) > 120 else title
+                    log_parts.append(title_preview)
+                log_parts.append(f"(hash: {info_hash})")
+                log_id = " ".join(log_parts) if log_parts else f"hash: {info_hash}"
+                
+                if saved_to_redis:
+                    logger.debug(f"[Tracker] Buscando: {log_id} → (S:{seed} L:{leech}) Salvo no Redis")
+                else:
+                    logger.debug(f"[Tracker] Buscando: {log_id} → (S:{seed} L:{leech}) Scrape realizado (erro ao salvar no Redis)")
         except Exception:
             pass
     

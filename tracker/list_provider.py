@@ -53,11 +53,25 @@ _CIRCUIT_BREAKER_TIMEOUT_THRESHOLD = 3  # Número de timeouts consecutivos antes
 _CIRCUIT_BREAKER_DISABLE_DURATION = 60  # 1 minuto de desabilitação após muitos timeouts
 
 _TRACKER_SOURCES = [
-    "https://cf.trackerslist.com/http.txt",  # Primeira opção
-    #"https://cf.trackerslist.com/best.txt",  # Primeira opção
-    #"https://ngosang.github.io/trackerslist/trackers_all_ip.txt",  # Primeira opção
-    "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best_ip.txt",  # Fallback 1
-    "https://cdn.jsdelivr.net/gh/ngosang/trackerslist@master/trackers_best_ip.txt",  # Fallback 2
+    "https://cf.trackerslist.com/best.txt",  # Primeira opção
+    "https://ngosang.github.io/trackerslist/trackers_all_ip.txt",  # Primeira opção
+    "udp://tracker.openbittorrent.com:80/announce",
+    "udp://tracker.trackerfix.com:83/announce",
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://tracker.trackerfix.com:80/announce",
+    "udp://tracker.coppersurfer.tk:6969/announce",
+    "udp://tracker.leechers-paradise.org:6969/announce",
+    "udp://eddie4.nl:6969/announce",
+    "udp://p4p.arenabg.com:1337/announce",
+    "udp://explodie.org:6969/announce",
+    "udp://zer0day.ch:1337/announce",
+    "udp://glotorrents.pw:6969/announce",
+    "udp://torrent.gresille.org:80/announce",
+    "udp://p4p.arenabg.ch:1337",
+    "udp://tracker.internetwarriors.net:1337",
+    "udp://tracker.openbittorrent.com:80/announce",
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://tracker.btzoo.eu:80/announce"
 ]
 
 
@@ -291,8 +305,6 @@ class TrackerListProvider:
                                 oldest_key = min(_logged_sources.items(), key=lambda x: x[1])[0]
                                 _logged_sources.pop(oldest_key, None)
                     
-                    if should_log:
-                        logger.debug("Trackers carregados: %s (%d)", source, len(trackers))
                     _record_success()  # Registra sucesso
                     return trackers
             except requests.exceptions.Timeout:

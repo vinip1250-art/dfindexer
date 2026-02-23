@@ -1120,6 +1120,7 @@ class BaseScraper(ABC):
                     scraper_name = getattr(self, 'DISPLAY_NAME', '') or scraper_type
         
         infohash_map: Dict[str, List[str]] = {}
+        log_id_by_hash: Dict[str, str] = {}
         for torrent in torrents:
             info_hash = (torrent.get('info_hash') or '').lower()
             if not info_hash or len(info_hash) != 40:
@@ -1151,10 +1152,10 @@ class BaseScraper(ABC):
                     continue
                 else:
                     # Não tem ambos valores, prossegue para scrape
-                    logger.debug(f"[Tracker] Buscando: {log_id} → Não encontrado")
+                    pass
             else:
                 # Não encontrou no cross-data, prossegue para scrape
-                logger.debug(f"[Tracker] Buscando tracker: {log_id} → Não encontrado")
+                pass
             
             # Se não encontrou no cross-data, adiciona para fazer scrape
             trackers = torrent.get('trackers') or []
@@ -1171,6 +1172,7 @@ class BaseScraper(ABC):
             
             # Adiciona para fazer scrape (mesmo se trackers estiver vazio, o TrackerService usa lista dinâmica)
             if info_hash:
+                log_id_by_hash[info_hash] = log_id
                 infohash_map.setdefault(info_hash, [])
                 if trackers:
                     infohash_map[info_hash].extend(trackers)
@@ -1191,6 +1193,8 @@ class BaseScraper(ABC):
                 continue
             leech_seed = peers_map.get(info_hash)
             if not leech_seed:
+                if info_hash in log_id_by_hash:
+                    logger.debug(f"[Tracker] Buscando: {log_id_by_hash[info_hash]} → Não encontrado")
                 continue
             leech, seed = leech_seed
             torrent['leech_count'] = leech
@@ -1236,7 +1240,7 @@ class BaseScraper(ABC):
             log_id = " ".join(log_parts) if log_parts else f"hash: {info_hash}"
             
             if saved_to_redis:
-                logger.debug(f"[Tracker] Buscando: {log_id} → Salvo no Redis")
+                logger.debug(f"[Tracker] Buscando: {log_id} → (S:{seed} L:{leech}) Salvo no Redis")
             else:
-                logger.debug(f"[Tracker] Buscando: {log_id} → Scrape realizado (erro ao salvar no Redis)")
+                logger.debug(f"[Tracker] Buscando: {log_id} → (S:{seed} L:{leech}) Scrape realizado (erro ao salvar no Redis)")
 

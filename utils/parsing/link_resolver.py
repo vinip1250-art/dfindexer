@@ -57,10 +57,15 @@ def decode_ad_link(ad_link: str) -> Optional[str]:
         return None
     
     try:
+        # Normaliza entidades HTML (&#038; -> &) para parse correto da query
+        ad_link = html.unescape(ad_link)
         parsed_url = urlparse(ad_link)
         query_params = parse_qs(parsed_url.query)
         id_param = query_params.get('id', [None])[0]
         
+        if not id_param:
+            return None
+        id_param = unquote(str(id_param).strip())
         if not id_param:
             return None
         
@@ -438,6 +443,26 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                             redirect_match = re.search(r'href=["\'](https?://[^"\']*(?:receber|recebi|link)\.php[^"\']*)["\']', html_content, re.IGNORECASE)
                             if redirect_match:
                                 redirect_link = redirect_match.group(1)
+                        
+                        # Fallback para páginas tipo systemads: link para get.php ou botão Continuar/Clique/Download
+                        if not redirect_link and ('systemads.org' in current_url or 'get.php' in current_url or 'seuvideo.xyz' in current_url):
+                            for a in doc.select('a[href]'):
+                                href = (a.get('href') or '').strip()
+                                if not href or href.startswith('#') or href.startswith('javascript:'):
+                                    continue
+                                href_lower = href.lower()
+                                text = (a.get_text() or '').strip().lower()
+                                if (
+                                    'get.php' in href_lower or 'receber' in href_lower or 'recebi' in href_lower or 'link.php' in href_lower
+                                    or any(t in text for t in ('continuar', 'clique aqui', 'aguarde', 'ir para', 'acessar', 'download', 'magnet', 'get link', 'obter'))
+                                    or ('systemads.org' in href_lower or 'seuvideo.xyz' in href_lower)
+                                ):
+                                    redirect_link = href
+                                    break
+                            if not redirect_link:
+                                get_php_match = re.search(r'href=["\'](https?://[^"\']*get\.php[^"\']*)["\']', html_content, re.IGNORECASE)
+                                if get_php_match:
+                                    redirect_link = get_php_match.group(1)
                         
                         # Verifica se já há magnet na página antes de seguir redirect
                         magnet_check = None

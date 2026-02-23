@@ -180,7 +180,6 @@ class TrackerService:
                 if peers is not None:
                     leechers, seeders = peers
                     if seeders or leechers:
-                        logger.debug("Tracker %s: %s (S:%d L:%d)", tracker, info_hash, seeders, leechers)
                         return leechers, seeders
                     # Se ambos são 0, armazena em best para retornar ao final (é resultado válido)
                     if best is None:
