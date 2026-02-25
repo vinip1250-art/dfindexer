@@ -27,3 +27,11 @@ pydantic>=2.7.0
 
 # Tracker UDP scraping (pode falhar em Vercel por restrições UDP — remova se der erro)
 # aiobtdht>=0.0.5
+
+flask>=3.0.0
+requests>=2.32.0
+beautifulsoup4>=4.12.0
+lxml>=5.2.0
+python-dateutil>=2.9.0
+httpx>=0.27.0
+aiohttp>=3.9.0
