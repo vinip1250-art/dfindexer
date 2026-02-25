@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "api/index.py"
+    }
+  ],
+  "env": {
+    "LOG_LEVEL": "1",
+    "LOG_FORMAT": "json",
+    "EMPTY_QUERY_MAX_LINKS": "8"
+  }
+}
