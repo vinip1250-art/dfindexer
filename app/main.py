@@ -14,6 +14,6 @@ for _mod in ("waitress", "gunicorn", "gevent"):
         _m.serve = lambda *a, **kw: None
         sys.modules[_mod] = _m
 
-from app.main import create_app
+from app.bootstrap import Bootstrap
 
-app = create_app()
+app = Bootstrap.create_app()
