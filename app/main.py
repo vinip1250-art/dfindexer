@@ -14,16 +14,6 @@ for _mod in ("waitress", "gunicorn", "gevent"):
         _m.serve = lambda *a, **kw: None
         sys.modules[_mod] = _m
 
-import app.main as _main
-import inspect
+from app.main import create_app
 
-# Tenta encontrar o app Flask automaticamente
-from flask import Flask
-app = None
-for _name, _obj in inspect.getmembers(_main):
-    if isinstance(_obj, Flask):
-        app = _obj
-        break
-
-if app is None:
-    raise RuntimeError(f"Flask app não encontrado em app.main. Membros: {dir(_main)}")
+app = create_app()
