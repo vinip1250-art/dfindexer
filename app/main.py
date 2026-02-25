@@ -1,29 +1,29 @@
-"""Copyright (c) 2025 DFlexy"""
-"""https://github.com/DFlexy"""
-
-import logging
-import os
 import sys
+import os
+import types
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT_DIR not in sys.path:
-    sys.path.append(ROOT_DIR)
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
-from app.config import Config
-from app.bootstrap import Bootstrap
-from utils.logging.logger import setup_logging
-from waitress import serve
+os.environ.setdefault("FLARESOLVERR_ADDRESS", "")
+os.environ.setdefault("REDIS_HOST", "")
 
-setup_logging(Config.LOG_LEVEL, Config.LOG_FORMAT)
+for _mod in ("waitress", "gunicorn", "gevent"):
+    if _mod not in sys.modules:
+        _m = types.ModuleType(_mod)
+        _m.serve = lambda *a, **kw: None
+        sys.modules[_mod] = _m
 
-logger = logging.getLogger(__name__)
+import app.main as _main
+import inspect
 
+# Tenta encontrar o app Flask automaticamente
+from flask import Flask
+app = None
+for _name, _obj in inspect.getmembers(_main):
+    if isinstance(_obj, Flask):
+        app = _obj
+        break
 
-def create_app():
-    return Bootstrap.create_app()
-
-
-if __name__ == '__main__':
-    app = create_app()
-    serve(app, host='0.0.0.0', port=Config.PORT, threads=12)
-
+if app is None:
+    raise RuntimeError(f"Flask app não encontrado em app.main. Membros: {dir(_main)}")
