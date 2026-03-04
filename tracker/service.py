@@ -14,6 +14,7 @@ from app.config import Config
 
 from .list_provider import TrackerListProvider
 from .udp_scraper import UDPScraper
+from .http_scraper import HTTPScraper
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,14 @@ def _filter_udp(trackers: Iterable[str]) -> List[str]:
     ]
 
 
+def _filter_http(trackers: Iterable[str]) -> List[str]:
+    return [
+        tracker
+        for tracker in trackers
+        if tracker and (tracker.lower().startswith("http://") or tracker.lower().startswith("https://"))
+    ]
+
+
 class TrackerService:
 
     def __init__(
@@ -87,6 +96,7 @@ class TrackerService:
         max_workers = Config.TRACKER_MAX_WORKERS if hasattr(Config, 'TRACKER_MAX_WORKERS') else 20
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._udp_scraper = UDPScraper(timeout=scrape_timeout, retries=scrape_retries)
+        self._http_scraper = HTTPScraper(timeout=4.0)
         self._list_provider = TrackerListProvider(redis_client=self.redis)
         self.max_trackers = max_trackers
 
@@ -112,36 +122,50 @@ class TrackerService:
         if not todo:
             return results
 
+        # Lista de trackers dinâmicos uma vez por lote (evita N chamadas a get_trackers)
+        dynamic_trackers = self._list_provider.get_trackers()
+
         futures = {
             self._executor.submit(
                 self._scrape_info_hash,
                 info_hash,
                 trackers,
+                dynamic_trackers,
             ): info_hash
             for info_hash, trackers in todo.items()
         }
 
-        for future in as_completed(futures):
-            info_hash = futures[future]
-            try:
-                peers = future.result()
-                # Se peers não é None, significa que conseguiu obter resposta do tracker (sucesso)
-                # Mesmo que seja (0, 0), devemos salvar para evitar consultas futuras
-                if peers is not None:
-                    results[info_hash] = peers
-                    self._store_cache(info_hash, peers)
-                else:
-                    # peers é None = falha ao obter dados (não salva, vai para circuito breaker)
+        # Timeout evita bloqueio indefinido se _scrape_info_hash travar (ex: trackers lentos, proxy TOR)
+        _PEER_BATCH_TIMEOUT = 180  # segundos para esperar próximo future completar
+        _seen = set()
+        try:
+            for future in as_completed(futures, timeout=_PEER_BATCH_TIMEOUT):
+                info_hash = futures[future]
+                _seen.add(info_hash)
+                try:
+                    peers = future.result(timeout=5)  # future já completou, 5s é fallback
+                    if peers is not None:
+                        results[info_hash] = peers
+                        self._store_cache(info_hash, peers)
+                    else:
+                        results[info_hash] = (0, 0)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Falha ao obter peers para %s: %s", info_hash, exc)
                     results[info_hash] = (0, 0)
-            except Exception as exc:  # noqa: BLE001
-                # Exceção = falha (não salva, vai para circuito breaker)
-                logger.warning("Falha ao obter peers para %s: %s", info_hash, exc)
+        except Exception as e:  # TimeoutError ou outro - evita bloqueio indefinido
+            remaining = [h for h in todo if h not in _seen]
+            if remaining:
+                logger.debug("Tracker batch: timeout/erro após %ds, %d pendentes recebem (0,0)", _PEER_BATCH_TIMEOUT, len(remaining))
+            for info_hash in remaining:
                 results[info_hash] = (0, 0)
 
         return results
 
     def _scrape_info_hash(
-        self, info_hash: str, trackers: Optional[Iterable[str]]
+        self,
+        info_hash: str,
+        trackers: Optional[Iterable[str]],
+        dynamic_trackers: Optional[List[str]] = None,
     ) -> Optional[Tuple[int, int]]:
         info_hash = info_hash.lower()
         try:
@@ -155,37 +179,58 @@ class TrackerService:
             for tracker in (_sanitize_tracker(t) for t in (trackers or []))
             if tracker
         ]
-        dynamic_trackers = self._list_provider.get_trackers()
+        if dynamic_trackers is None:
+            dynamic_trackers = self._list_provider.get_trackers()
 
-        combined_trackers = _stable_unique(provided_trackers + dynamic_trackers)
+        combined_trackers = _stable_unique(provided_trackers + (dynamic_trackers or []))
+        http_trackers = _filter_http(combined_trackers)
         udp_trackers = _filter_udp(combined_trackers)
 
         if self.max_trackers > 0:
-            udp_trackers = udp_trackers[: self.max_trackers]
-
-        if not udp_trackers:
-            return None
+            half = max(1, self.max_trackers // 2)
+            http_trackers = http_trackers[:half]
+            udp_trackers = udp_trackers[:half]
 
         best: Optional[Tuple[int, int]] = None
-        dns_errors = {}  # Agrupa erros de DNS por tracker
-        timeout_errors = {}  # Agrupa erros de timeout por tracker
-        
+        zero_count = 0
+        _MAX_ZERO_RESPONSES = 2  # Se 2 trackers respondem (0,0), para de tentar
+
+        # HTTP/HTTPS primeiro (funciona com proxy TOR)
+        for tracker in http_trackers:
+            try:
+                peers = self._scrape_single_http_tracker(tracker, info_hash_bytes)
+                if peers is not None:
+                    leechers, seeders = peers
+                    if seeders or leechers:
+                        return leechers, seeders
+                    if best is None:
+                        best = (leechers, seeders)
+                    zero_count += 1
+                    if zero_count >= _MAX_ZERO_RESPONSES:
+                        break
+            except Exception:
+                pass
+
+        # Se já tem resposta (0,0) confirmada por 2+ trackers, retorna sem tentar UDP
+        if zero_count >= _MAX_ZERO_RESPONSES and best is not None:
+            return best
+
+        # UDP em seguida
         for tracker in udp_trackers:
             try:
                 peers = self._scrape_single_tracker(
                     tracker, info_hash_bytes, info_hash
                 )
-                # Se peers não é None, significa que conseguiu obter resposta do tracker (sucesso)
-                # Mesmo que seja (0, 0), é um resultado válido
                 if peers is not None:
                     leechers, seeders = peers
                     if seeders or leechers:
                         return leechers, seeders
-                    # Se ambos são 0, armazena em best para retornar ao final (é resultado válido)
                     if best is None:
                         best = (leechers, seeders)
+                    zero_count += 1
+                    if zero_count >= _MAX_ZERO_RESPONSES:
+                        break
             except Exception as exc:  # noqa: BLE001
-                # Detecta e trata erros de forma mais amigável
                 error_msg = str(exc)
                 is_dns_error = (
                     "Temporary failure in name resolution" in error_msg
@@ -203,33 +248,32 @@ class TrackerService:
                 )
                 
                 if is_dns_error:
-                    # Agrupa erros de DNS - só loga uma vez por tracker
-                    if tracker not in dns_errors:
-                        dns_errors[tracker] = True
-                        logger.debug("Tracker %s: DNS error", tracker)
-                    # Não loga cada info_hash individualmente para erros de DNS
+                    logger.debug("Tracker %s: DNS error", tracker)
                 elif is_timeout_error:
-                    # Agrupa erros de timeout - só loga uma vez por tracker
-                    if tracker not in timeout_errors:
-                        timeout_errors[tracker] = True
-                        logger.debug("Tracker %s: timeout", tracker)
-                    # Não loga cada info_hash individualmente para erros de timeout
+                    logger.debug("Tracker %s: timeout", tracker)
                 else:
-                    # Outros erros são logados normalmente (mas de forma mais resumida)
                     error_type = type(exc).__name__
-                    short_msg = error_msg.split('\n')[0][:100]  # Primeira linha, máximo 100 chars
-                    logger.debug("Tracker %s: %s - %s", tracker, error_type, short_msg[:50])
+                    short_msg = error_msg.split('\n')[0][:50]
+                    logger.debug("Tracker %s: %s - %s", tracker, error_type, short_msg)
 
-        # Se best não é None, retorna (mesmo que seja 0, 0 - é resultado válido)
         if best is not None:
             return best
         return None
+
+    def _scrape_single_http_tracker(
+        self, tracker: str, info_hash_bytes: bytes
+    ) -> Optional[Tuple[int, int]]:
+        """Faz scrape de um tracker HTTP/HTTPS (usa proxy quando configurado)."""
+        try:
+            return self._http_scraper.scrape(tracker, info_hash_bytes)
+        except Exception:  # noqa: BLE001
+            return None
 
     def _scrape_single_tracker(
         self, tracker: str, info_hash_bytes: bytes, info_hash: str
     ) -> Optional[Tuple[int, int]]:
         """
-        Faz scrape de um único tracker.
+        Faz scrape de um único tracker UDP.
         Método auxiliar para consultas paralelas.
         """
         try:

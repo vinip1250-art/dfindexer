@@ -126,7 +126,7 @@ class BaseScraper(ABC):
             cached_local = http_cache.get(url)
             if cached_local:
                 self._cache_stats['html']['hits'] += 1
-                return BeautifulSoup(cached_local, 'html.parser')
+                return BeautifulSoup(cached_local, 'lxml')
         
         # Verifica Redis
         if self.redis and not self._is_test:
@@ -135,7 +135,7 @@ class BaseScraper(ABC):
                 cached = self.redis.get(cache_key)
                 if cached:
                     self._cache_stats['html']['hits'] += 1
-                    return BeautifulSoup(cached, 'html.parser')
+                    return BeautifulSoup(cached, 'lxml')
             except (AttributeError, TypeError) as e:
                 # Redis client error ou cache inválido - continua para buscar do site
                 logger.debug(f"Redis cache error (long): {type(e).__name__}")
@@ -149,7 +149,7 @@ class BaseScraper(ABC):
                 cached = self.redis.get(short_cache_key)
                 if cached:
                     self._cache_stats['html']['hits'] += 1
-                    return BeautifulSoup(cached, 'html.parser')
+                    return BeautifulSoup(cached, 'lxml')
             except (AttributeError, TypeError) as e:
                 # Redis client error ou cache inválido - continua para buscar do site
                 logger.debug(f"Redis cache error (short): {type(e).__name__}")
@@ -168,7 +168,7 @@ class BaseScraper(ABC):
                     cached = self.redis.get(cache_key)
                     if cached:
                         self._cache_stats['html']['hits'] += 1
-                        return BeautifulSoup(cached, 'html.parser')
+                        return BeautifulSoup(cached, 'lxml')
                 except Exception:
                     pass
             
@@ -178,7 +178,7 @@ class BaseScraper(ABC):
                     cached = self.redis.get(short_cache_key)
                     if cached:
                         self._cache_stats['html']['hits'] += 1
-                        return BeautifulSoup(cached, 'html.parser')
+                        return BeautifulSoup(cached, 'lxml')
                 except Exception:
                     pass
             
@@ -203,7 +203,7 @@ class BaseScraper(ABC):
                                 with _url_fetching_lock:
                                     _url_fetching.discard(url)
                                 self._cache_stats['html']['hits'] += 1
-                                return BeautifulSoup(cached, 'html.parser')
+                                return BeautifulSoup(cached, 'lxml')
                         except Exception:
                             pass
                 # Se não encontrou após esperar, continua a busca (pode ter falhado ou demorado demais)
@@ -290,7 +290,7 @@ class BaseScraper(ABC):
                                 except:
                                     pass
                             
-                            result = BeautifulSoup(html_content, 'html.parser')
+                            result = BeautifulSoup(html_content, 'lxml')
                             with _url_fetching_lock:
                                 _url_fetching.discard(url)
                             return result
@@ -381,7 +381,7 @@ class BaseScraper(ABC):
                                             except:
                                                 pass
                                         
-                                        result = BeautifulSoup(html_content, 'html.parser')
+                                        result = BeautifulSoup(html_content, 'lxml')
                                         with _url_fetching_lock:
                                             _url_fetching.discard(url)
                                         return result
@@ -480,7 +480,7 @@ class BaseScraper(ABC):
                                     except:
                                         pass
                                 
-                                result = BeautifulSoup(html_content, 'html.parser')
+                                result = BeautifulSoup(html_content, 'lxml')
                                 with _url_fetching_lock:
                                     _url_fetching.discard(url)
                                 return result
@@ -540,7 +540,7 @@ class BaseScraper(ABC):
                 except:
                     pass
             
-            result = BeautifulSoup(html_content, 'html.parser')
+            result = BeautifulSoup(html_content, 'lxml')
             with _url_fetching_lock:
                 _url_fetching.discard(url)
             return result

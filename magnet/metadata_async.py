@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 # Rate limiter async
 _rate_limiter_lock = asyncio.Lock()
 _rate_limiter_last_request = 0.0
-_rate_limiter_min_interval = 0.5
-_rate_limiter_burst_tokens = 4
+_rate_limiter_min_interval = 0.15  # Sincronizado com metadata.py (~6-7 req/s)
+_rate_limiter_burst_tokens = 10  # Sincronizado com metadata.py
 _CIRCUIT_BREAKER_KEY = circuit_metadata_key()
 _CIRCUIT_BREAKER_TIMEOUT_THRESHOLD = 3
 _CIRCUIT_BREAKER_503_THRESHOLD = 5
@@ -67,7 +67,7 @@ async def _rate_limit():
         
         if elapsed >= _rate_limiter_min_interval:
             tokens_to_add = int(elapsed / _rate_limiter_min_interval)
-            _rate_limiter_burst_tokens = min(4, _rate_limiter_burst_tokens + tokens_to_add)
+            _rate_limiter_burst_tokens = min(10, _rate_limiter_burst_tokens + tokens_to_add)
         
         if _rate_limiter_burst_tokens <= 0:
             wait_time = _rate_limiter_min_interval - elapsed
@@ -77,7 +77,7 @@ async def _rate_limit():
                 elapsed = now - _rate_limiter_last_request
                 if elapsed >= _rate_limiter_min_interval:
                     tokens_to_add = int(elapsed / _rate_limiter_min_interval)
-                    _rate_limiter_burst_tokens = min(4, tokens_to_add)
+                    _rate_limiter_burst_tokens = min(10, tokens_to_add)
         
         _rate_limiter_burst_tokens -= 1
         _rate_limiter_last_request = now

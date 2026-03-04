@@ -395,7 +395,7 @@ def resolve_protected_link(protlink_url: str, session: requests.Session, base_ur
                             except Exception:
                                 html_content = response.content.decode('utf-8', errors='ignore')
                         
-                        doc = BeautifulSoup(html_content, 'html.parser')
+                        doc = BeautifulSoup(html_content, 'lxml')
                         redirect_link = None
                         
                         # Busca redirect no HTML (links, meta refresh, JavaScript)

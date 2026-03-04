@@ -35,6 +35,32 @@ _hash_locks_lock = threading.Lock()
 _hash_fetching = set()
 _hash_fetching_lock = threading.Lock()
 
+# Sessão HTTP global reutilizada entre chamadas (evita overhead de TLS handshake repetido)
+_http_session = None
+_http_session_lock = threading.Lock()
+
+
+def _get_http_session() -> requests.Session:
+    global _http_session
+    if _http_session is None:
+        with _http_session_lock:
+            if _http_session is None:
+                s = requests.Session()
+                s.headers.update({
+                    'User-Agent': 'TorrentMetadataService/1.0',
+                    'Accept-Encoding': 'gzip',
+                })
+                from utils.http.proxy import get_proxy_dict
+                proxy_dict = get_proxy_dict()
+                if proxy_dict:
+                    s.proxies.update(proxy_dict)
+                from requests.adapters import HTTPAdapter
+                adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20)
+                s.mount('https://', adapter)
+                s.mount('http://', adapter)
+                _http_session = s
+    return _http_session
+
 
 def _is_redis_connection_error(error: Exception) -> bool:
     # Verifica se o erro é de conexão com Redis (Redis desabilitado/indisponível)
@@ -364,137 +390,59 @@ def _parse_bencode_size(data: bytes) -> Optional[int]:
 
 def _fetch_torrent_header(info_hash: str, use_lowercase: bool = False) -> Tuple[Optional[bytes], bool, bool]:
     """
-    Baixa apenas o header do arquivo .torrent do iTorrents.
-    Usa HTTP Range requests para baixar só o necessário (até 512KB).
+    Baixa header do .torrent do iTorrents em um único request (Range 0-512KB).
+    Usa sessão HTTP global para reusar conexão TCP/TLS.
     
     Returns:
-        Tupla (dados, foi_timeout, foi_503): dados do torrent ou None, se houve timeout, e se foi 503
+        Tupla (dados, foi_timeout, foi_503)
     """
     info_hash_hex = info_hash.lower() if use_lowercase else info_hash.upper()
     url = f"https://itorrents.org/torrent/{info_hash_hex}.torrent"
     
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'TorrentMetadataService/1.0',
-        'Accept-Encoding': 'gzip',
-    })
-    # Configura proxy se disponível
-    from utils.http.proxy import get_proxy_dict
-    proxy_dict = get_proxy_dict()
-    if proxy_dict:
-        session.proxies.update(proxy_dict)
+    session = _get_http_session()
+    timeout_config = (3, 4)  # (connect, read)
+    max_bytes = 512 * 1024  # 512KB
     
-    # Timeout otimizado para balancear velocidade e confiabilidade
-    timeout_config = (3, 3)  # (connect_timeout, read_timeout) - aumentado de (2, 1.5) para reduzir timeouts
-    
-    # Tenta baixar chunks progressivamente até ter o header completo
-    # Chunk inicial muito maior para reduzir drasticamente número de requisições HTTP
-    chunk_size = 128 * 1024  # 128KB inicial (aumentado de 32KB) - menos requisições = mais rápido
-    max_size = 512 * 1024   # 512KB máximo
-    all_data = b''
-    start = 0
-    max_iterations = 8  # Reduzido de 10 para 8 (chunks maiores = menos iterações necessárias)
-    iteration = 0
-    
-    # Rate limiting apenas uma vez no início (não a cada chunk)
     _rate_limit()
     
     try:
-        while start < max_size and iteration < max_iterations:
-            iteration += 1
-            
-            # Faz requisição com Range header
-            headers = {'Range': f'bytes={start}-{start + chunk_size - 1}'}
-            try:
-                response = session.get(url, headers=headers, timeout=timeout_config)
-            except requests.exceptions.Timeout:
-                # Timeout detectado - registra mas NÃO cacheia falha (pode ser temporário)
-                _record_timeout()
-                return None, True, False
-            except requests.exceptions.ReadTimeout:
-                # Read timeout detectado - registra mas NÃO cacheia falha (pode ser temporário)
-                _record_timeout()
-                return None, True, False
-            
-            # Aceita 200 (full) ou 206 (partial)
-            if response.status_code not in (200, 206):
-                if response.status_code == 404:
-                    # Torrent não encontrado - cacheia por tempo curto (1m) para evitar tentativas repetidas
-                    _cache_failure(info_hash, is_503=False)
-                    return None, False, False
-                if response.status_code == 503:
-                    # Service Unavailable - registra 503 e cacheia falha por mais tempo
-                    _record_503()
-                    _cache_failure(info_hash, is_503=True)
-                    return None, False, True
-                # Outros erros HTTP (500, 502, etc.) - cacheia por tempo curto
-                try:
-                    response.raise_for_status()
-                except requests.exceptions.HTTPError:
-                    # Erro HTTP genérico - cacheia falha por tempo curto
-                    _cache_failure(info_hash, is_503=False)
-                    return None, False, False
-            
-            chunk = response.content
-            if not chunk:
-                break  # Fim do arquivo
-            
-            all_data += chunk
-            
-            # Se recebeu HTML (erro), para
-            if b'<!DOCTYPE html' in all_data or b'<html' in all_data.lower():
-                return None, False, False
-            
-            # Verifica se já tem o suficiente (procura por "pieces" que vem depois dos metadados)
-            if b'pieces' in all_data:
-                # Encontrou o campo "pieces", já tem metadados suficientes
-                pieces_index = all_data.index(b'pieces')
-                # Retorna até "pieces" + um pouco mais para garantir
-                _record_success()  # Registra sucesso
-                return all_data[:pieces_index + 20], False, False
-            
-            # Se recebeu menos que o chunk_size, chegou ao fim
-            if len(chunk) < chunk_size:
-                break
-            
-            # Próximo chunk - aumenta mais agressivamente
-            start += len(chunk)
-            chunk_size = min(chunk_size * 2, 256 * 1024)  # Aumenta chunk, máximo 256KB (aumentado de 128KB)
+        headers = {'Range': f'bytes=0-{max_bytes - 1}'}
+        response = session.get(url, headers=headers, timeout=timeout_config)
         
-        if all_data:
-            _record_success()  # Registra sucesso
-        return (all_data if all_data else None), False, False
-    
-    except requests.exceptions.Timeout:
-        # Timeout - registra mas NÃO cacheia falha (pode ser temporário)
-        _record_timeout()
-        return None, True, False
-    except requests.exceptions.ReadTimeout:
-        # Read timeout - registra mas NÃO cacheia falha (pode ser temporário)
-        _record_timeout()
-        return None, True, False
-    except requests.exceptions.HTTPError as e:
-        # Trata erros HTTP específicos
-        if hasattr(e.response, 'status_code') and e.response.status_code == 503:
+        if response.status_code == 404:
+            _cache_failure(info_hash, is_503=False)
+            return None, False, False
+        if response.status_code == 503:
             _record_503()
             _cache_failure(info_hash, is_503=True)
             return None, False, True
-        elif hasattr(e.response, 'status_code') and e.response.status_code == 404:
-            # 404 - torrent não encontrado, cacheia por tempo curto
+        if response.status_code not in (200, 206):
             _cache_failure(info_hash, is_503=False)
             return None, False, False
-        else:
-            # Outros erros HTTP - cacheia por tempo curto
-            _cache_failure(info_hash, is_503=False)
+        
+        data = response.content
+        if not data:
             return None, False, False
+        
+        if b'<!DOCTYPE html' in data or b'<html' in data.lower():
+            return None, False, False
+        
+        _record_success()
+        
+        if b'pieces' in data:
+            idx = data.index(b'pieces')
+            return data[:idx + 20], False, False
+        
+        return data, False, False
+    
+    except (requests.exceptions.Timeout, requests.exceptions.ReadTimeout):
+        _record_timeout()
+        return None, True, False
     except requests.exceptions.ConnectionError:
-        # Erro de conexão (DNS, rede, etc.) - não cacheia falha, pode ser temporário
         return None, False, False
     except requests.exceptions.RequestException:
-        # Outros erros de requisição - não cacheia falha, pode ser temporário
         return None, False, False
     except Exception:
-        # Erro inesperado - não cacheia falha
         return None, False, False
 
 

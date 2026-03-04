@@ -47,22 +47,38 @@ class TorrentEnricher:
         if not torrents:
             return torrents
         
-        if not skip_metadata:
-            # Armazena scraper_name temporariamente para uso nos logs de metadata
-            self._current_scraper_name = scraper_name
-            try:
-                self._fetch_metadata_batch(torrents)
-            finally:
-                # Limpa após uso
-                if hasattr(self, '_current_scraper_name'):
-                    delattr(self, '_current_scraper_name')
+        # Metadata e Tracker scrape rodam em paralelo (não dependem um do outro)
+        from concurrent.futures import ThreadPoolExecutor, wait
+        
+        metadata_future = None
+        tracker_future = None
+        
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="enrich") as pool:
+            if not skip_metadata:
+                self._current_scraper_name = scraper_name
+                metadata_future = pool.submit(self._fetch_metadata_batch, torrents)
+            
+            if not skip_trackers:
+                tracker_future = pool.submit(self._attach_peers, torrents)
+            
+            if metadata_future:
+                try:
+                    metadata_future.result(timeout=120)
+                except Exception:
+                    pass
+                finally:
+                    if hasattr(self, '_current_scraper_name'):
+                        delattr(self, '_current_scraper_name')
+            
+            if tracker_future:
+                try:
+                    tracker_future.result(timeout=180)
+                except Exception:
+                    pass
         
         self._apply_size_fallback(torrents, skip_metadata=skip_metadata)
         self._apply_date_fallback(torrents, skip_metadata=skip_metadata)
         self._apply_imdb_fallback(torrents)
-        
-        if not skip_trackers:
-            self._attach_peers(torrents)
         
         return torrents
     

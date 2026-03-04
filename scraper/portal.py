@@ -27,7 +27,7 @@ _log_ctx = ScraperLogContext("Portal", logger)
 # Scraper específico para Portal Filmes
 class PortalScraper(BaseScraper):
     SCRAPER_TYPE = "portal"
-    DEFAULT_BASE_URL = "https://baixafilmestorrent.org/"
+    DEFAULT_BASE_URL = "https://idopetorrent.com/"
     DISPLAY_NAME = "Portal"
     
     def __init__(self, base_url: Optional[str] = None, use_flaresolverr: bool = False):
@@ -40,78 +40,37 @@ class PortalScraper(BaseScraper):
         return self._default_search(query, filter_func)
     
     # Extrai links da página inicial (lógica especial para separar filmes e séries)
+    # Extrai links da página inicial — somente seção "Últimos Adicionados"
     def _extract_links_from_page(self, doc: BeautifulSoup) -> Tuple[List[str], List[str]]:
-        # Separa links de filmes e séries dentro das seções específicas
         filmes_links = []
-        series_links = []
-        
-        # Encontra a seção "Últimos Filmes Adicionados"
-        filmes_h2 = None
+        series_links = []  # não usado; mantido pela assinatura (filmes, series)
+
         for h2 in doc.find_all('h2', class_='block-title'):
-            if 'Últimos Filmes Adicionados' in h2.get_text():
-                filmes_h2 = h2
+            if 'Últimos Adicionados' in (h2.get_text() or ''):
+                block_header = h2.find_parent('div', class_='block-header')
+                if block_header:
+                    movies_list = block_header.find_next_sibling('div', class_='movies-list')
+                    if not movies_list:
+                        movies_list = block_header.find_next('div', class_='movies-list')
+                    if movies_list:
+                        for item in movies_list.select('article.col .item .image a, article.col .item .title a, div.col .item .image a, div.col .item .title a'):
+                            href = item.get('href')
+                            if href:
+                                absolute_url = urljoin(self.base_url, href)
+                                if absolute_url not in filmes_links:
+                                    filmes_links.append(absolute_url)
                 break
-        
-        if filmes_h2:
-            # Encontra o container pai (div.block-header)
-            block_header_filmes = filmes_h2.find_parent('div', class_='block-header')
-            if block_header_filmes:
-                # Pega o próximo div.movies-list que vem depois deste block-header
-                movies_list = block_header_filmes.find_next_sibling('div', class_='movies-list')
-                if not movies_list:
-                    # Se não encontrar como sibling direto, busca o próximo na árvore
-                    movies_list = block_header_filmes.find_next('div', class_='movies-list')
-                
-                if movies_list:
-                    for item in movies_list.select('article.col .item .image a, article.col .item .title a'):
-                        href = item.get('href')
-                        if href:
-                            # Converte URL relativa para absoluta
-                            absolute_url = urljoin(self.base_url, href)
-                            if absolute_url not in filmes_links:
-                                filmes_links.append(absolute_url)
-        
-        # Encontra a seção "Últimas Séries Adicionadas"
-        series_h2 = None
-        for h2 in doc.find_all('h2', class_='block-title'):
-            if 'Últimas Séries Adicionadas' in h2.get_text():
-                series_h2 = h2
-                break
-        
-        if series_h2:
-            # Encontra o container pai (div.block-header)
-            block_header_series = series_h2.find_parent('div', class_='block-header')
-            if block_header_series:
-                # Pega o próximo div.movies-list que vem depois deste block-header
-                movies_list = block_header_series.find_next_sibling('div', class_='movies-list')
-                if not movies_list:
-                    # Se não encontrar como sibling direto, busca o próximo na árvore
-                    movies_list = block_header_series.find_next('div', class_='movies-list')
-                
-                if movies_list:
-                    for item in movies_list.select('article.col .item .image a, article.col .item .title a'):
-                        href = item.get('href')
-                        if href:
-                            # Converte URL relativa para absoluta
-                            absolute_url = urljoin(self.base_url, href)
-                            if absolute_url not in series_links:
-                                series_links.append(absolute_url)
-        
-        # Fallback: Se não encontrou as seções específicas, usa seletores genéricos
-        if not filmes_links and not series_links:
-            _log_ctx.info("Seções específicas não encontradas - usando fallback genérico")
-            
-            # Busca em todas as movies-list da página
+
+        if not filmes_links:
+            _log_ctx.info("Seção 'Últimos Adicionados' não encontrada - usando fallback genérico")
             for movies_list in doc.select('div.movies-list'):
-                for item in movies_list.select('article.col .item .image a, article.col .item .title a'):
+                for item in movies_list.select('article.col .item .image a, article.col .item .title a, div.col .item .image a, div.col .item .title a'):
                     href = item.get('href')
                     if href:
                         absolute_url = urljoin(self.base_url, href)
-                        # Coloca todos no filmes_links como fallback
                         if absolute_url not in filmes_links:
                             filmes_links.append(absolute_url)
-        
-        # Retorna tupla com filmes e séries separados
+
         return (filmes_links, series_links)
     
     # Obtém torrents de uma página específica (usa helper padrão com extração customizada)
@@ -136,22 +95,12 @@ class PortalScraper(BaseScraper):
             
             # Obtém limite efetivo usando função utilitária
             effective_max = get_effective_max_items(max_items)
-            
-            # Quando há limite configurado, coleta metade de cada seção
-            # Caso contrário, coleta todos de ambas as seções
+
+            # Aplica limite somente à lista de links (seção Últimos Adicionados)
             if effective_max > 0:
-                # Calcula metade do limite para cada seção
-                half_limit = max(1, effective_max // 2)
-                
-                # Limita cada seção à metade
-                filmes_links = limit_list(filmes_links, half_limit)
-                series_links = limit_list(series_links, half_limit)
-                
-                _log_ctx.info(f"Limite configurado: {effective_max} - Coletando {len(filmes_links)} filmes e {len(series_links)} séries")
-                links = filmes_links + series_links
-            else:
-                # Sem limite, combina todos os links
-                links = filmes_links + series_links
+                filmes_links = limit_list(filmes_links, effective_max)
+                _log_ctx.info(f"Limite configurado: {effective_max} - Coletando {len(filmes_links)} itens")
+            links = filmes_links
             
             # Usa processamento paralelo centralizado (mantém ordem original automaticamente)
             # NÃO passa limite de torrents - o limite já foi aplicado nos links acima
