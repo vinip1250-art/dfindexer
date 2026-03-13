@@ -1,29 +1,19 @@
-"""Copyright (c) 2025 DFlexy"""
-"""https://github.com/DFlexy"""
-
-import logging
-import os
 import sys
+import os
+import types
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if ROOT_DIR not in sys.path:
-    sys.path.append(ROOT_DIR)
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
-from app.config import Config
+os.environ.setdefault("FLARESOLVERR_ADDRESS", "")
+os.environ.setdefault("REDIS_HOST", "")
+
+for _mod in ("waitress", "gunicorn", "gevent"):
+    if _mod not in sys.modules:
+        _m = types.ModuleType(_mod)
+        _m.serve = lambda *a, **kw: None
+        sys.modules[_mod] = _m
+
 from app.bootstrap import Bootstrap
-from utils.logging.logger import setup_logging
-from waitress import serve
 
-setup_logging(Config.LOG_LEVEL, Config.LOG_FORMAT)
-
-logger = logging.getLogger(__name__)
-
-
-def create_app():
-    return Bootstrap.create_app()
-
-
-if __name__ == '__main__':
-    app = create_app()
-    serve(app, host='0.0.0.0', port=Config.PORT, threads=12)
-
+app = Bootstrap.create_app()
