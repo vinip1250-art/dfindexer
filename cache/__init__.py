@@ -1,94 +1,91 @@
-"""Copyright (c) 2025 DFlexy"""
-"""https://github.com/DFlexy"""
+"""
+Cache adapter para Vercel — usa apenas memória, sem Redis.
 
-# Módulo de cache (Redis e memória)
-import threading
+Substitua o __init__.py original do diretório cache/ por este arquivo.
+Mantém a mesma interface pública que o código original espera.
+"""
+import os
+import logging
+from .memory_cache import MemoryRedis, TTLCache, get_memory_redis
 
-from cache.redis_client import init_redis, get_redis_client
-from cache.html_cache import HTMLCache
-from cache.metadata_cache import MetadataCache
-from cache.tracker_cache import TrackerCache
+logger = logging.getLogger(__name__)
+
+# -----------------------------------------------------------------------
+# Compatibilidade: o projeto original expõe get_redis_client() e variáveis
+# de TTL lidas de env vars.
+# -----------------------------------------------------------------------
+
+HTML_CACHE_TTL_SHORT = int(
+    os.getenv("HTML_CACHE_TTL_SHORT", str(10 * 60))   # 10 min
+)
+HTML_CACHE_TTL_LONG = int(
+    os.getenv("HTML_CACHE_TTL_LONG", str(12 * 60 * 60))  # 12h
+)
+
+# Cache local em memória de 30s (já existia no projeto original, mantido)
+_local_html_cache = TTLCache()
+LOCAL_CACHE_TTL = 30  # segundos
 
 
-def cleanup_request_caches():
+def get_redis_client() -> MemoryRedis:
     """
-    Limpa caches em threading.local e estado global acumulado entre requisições.
-    Chamar após cada busca de scraper para evitar acúmulo de memória.
+    Retorna o cliente de cache em memória.
+    Drop-in replacement para o cliente Redis original.
     """
-    # Limpa threading.local de todos os módulos que usam _request_cache
-    _modules_with_request_cache = []
-    try:
-        from cache import metadata_cache as _mc
-        _modules_with_request_cache.append(_mc)
-    except Exception:
-        pass
-    try:
-        from cache import tracker_cache as _tc
-        _modules_with_request_cache.append(_tc)
-    except Exception:
-        pass
-    try:
-        from utils.parsing import link_resolver as _lr
-        _modules_with_request_cache.append(_lr)
-    except Exception:
-        pass
-    try:
-        from scraper import base as _sb
-        _modules_with_request_cache.append(_sb)
-    except Exception:
-        pass
-    try:
-        from magnet import metadata as _mm
-        _modules_with_request_cache.append(_mm)
-    except Exception:
-        pass
-    try:
-        from utils.http import flaresolverr as _fs
-        _modules_with_request_cache.append(_fs)
-    except Exception:
-        pass
+    return get_memory_redis()
 
-    for mod in _modules_with_request_cache:
-        rc = getattr(mod, '_request_cache', None)
-        if rc and isinstance(rc, threading.local):
-            for attr in list(vars(rc).keys()):
-                try:
-                    delattr(rc, attr)
-                except Exception:
-                    pass
 
-    # Limpa dicionários globais de locks que crescem (módulos síncronos)
-    try:
-        from scraper.base import cleanup_url_state
-        cleanup_url_state()
-    except Exception:
-        pass
-    try:
-        from magnet.metadata import cleanup_metadata_state
-        cleanup_metadata_state()
-    except Exception:
-        pass
+def is_redis_available() -> bool:
+    """Sempre True — memória nunca falha."""
+    return True
 
-    # Limpa estado global do módulo async de metadata (_hash_locks, log caches)
-    try:
-        from magnet.metadata_async import cleanup_metadata_async_state
-        cleanup_metadata_async_state()
-    except Exception:
-        pass
 
-    # Limpa locks e caches globais do FlareSolverr que crescem entre requisições
-    try:
-        from utils.http.flaresolverr import cleanup_flaresolverr_state
-        cleanup_flaresolverr_state()
-    except Exception:
-        pass
+# -----------------------------------------------------------------------
+# HTML Cache helpers (replicam o comportamento do projeto original)
+# -----------------------------------------------------------------------
+
+def get_html_cache(url: str) -> str | None:
+    """Busca HTML cacheado. Primeiro local (30s), depois memória-redis."""
+    # Camada 1: cache local 30s
+    local_val = _local_html_cache.get(f"local:{url}")
+    if local_val:
+        return local_val
+
+    # Camada 2: cache principal em memória
+    redis = get_memory_redis()
+    val = redis.get(f"html:{url}")
+    if val:
+        html = val.decode() if isinstance(val, bytes) else val
+        # popula o local para as próximas chamadas imediatas
+        _local_html_cache.set(f"local:{url}", html, ttl_seconds=LOCAL_CACHE_TTL)
+        return html
+
+    return None
+
+
+def set_html_cache(url: str, html: str, is_large: bool = False) -> None:
+    """Salva HTML no cache. TTL varia pelo tamanho da página."""
+    redis = get_memory_redis()
+    ttl = HTML_CACHE_TTL_LONG if is_large else HTML_CACHE_TTL_SHORT
+    redis.setex(f"html:{url}", ttl, html)
+    _local_html_cache.set(f"local:{url}", html, ttl_seconds=LOCAL_CACHE_TTL)
+
+
+def delete_html_cache(url: str) -> None:
+    redis = get_memory_redis()
+    redis.delete(f"html:{url}")
+    _local_html_cache.delete(f"local:{url}")
 
 
 __all__ = [
-    'init_redis',
-    'get_redis_client',
-    'HTMLCache',
-    'MetadataCache',
-    'TrackerCache',
-    'cleanup_request_caches',
+    "get_redis_client",
+    "is_redis_available",
+    "get_html_cache",
+    "set_html_cache",
+    "delete_html_cache",
+    "HTML_CACHE_TTL_SHORT",
+    "HTML_CACHE_TTL_LONG",
+    "LOCAL_CACHE_TTL",
+    "MemoryRedis",
+    "TTLCache",
 ]
