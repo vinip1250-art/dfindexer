@@ -1,11 +1,15 @@
 """Copyright (c) 2025 DFlexy"""
 """https://github.com/DFlexy"""
 
+import re
 import logging
 from typing import Dict, Callable
 from utils.text.query import check_query_match
 
 logger = logging.getLogger(__name__)
+
+# Regex para detectar IMDB ID (ex: tt1234567 ou tt27543632)
+_IMDB_ID_RE = re.compile(r'^tt\d+$', re.IGNORECASE)
 
 
 class QueryFilter:
@@ -14,7 +18,19 @@ class QueryFilter:
         # Cria função de filtro baseada na query
         if not query:
             return lambda t: True
-        
+
+        # Busca por IMDB ID: se a query for "tt1234567", compara contra o campo imdb
+        query_stripped = query.strip()
+        if _IMDB_ID_RE.match(query_stripped):
+            imdb_query = query_stripped.lower()
+            def imdb_filter_func(torrent: Dict) -> bool:
+                torrent_imdb = (torrent.get('imdb') or '').strip().lower()
+                result = torrent_imdb == imdb_query
+                if result:
+                    logger.debug(f"IMDB match: query='{imdb_query}' == torrent imdb='{torrent_imdb}'")
+                return result
+            return imdb_filter_func
+
         def filter_func(torrent: Dict) -> bool:
             # Garante que todas as variáveis sejam strings (converte None para string vazia)
             title_processed = torrent.get('title_processed') or ''
@@ -55,4 +71,3 @@ class QueryFilter:
             return result
         
         return filter_func
-
