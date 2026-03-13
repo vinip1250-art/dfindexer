@@ -83,9 +83,14 @@ __all__ = [
     "get_html_cache",
     "set_html_cache",
     "delete_html_cache",
+    "cleanup_request_caches", 
     "HTML_CACHE_TTL_SHORT",
     "HTML_CACHE_TTL_LONG",
     "LOCAL_CACHE_TTL",
     "MemoryRedis",
     "TTLCache",
 ]
+
+def cleanup_request_caches() -> None:
+    """Limpa caches temporários de request. No-op em memória."""
+    pass
