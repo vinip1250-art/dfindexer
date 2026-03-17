@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: dfindexer
+    runtime: python
+    repo: https://github.com/vinip1250-art/dfindexer
+    plan: free # Você pode mudar para 'starter' se precisar de mais recursos
+    region: ohio # Ou a região de sua preferência (frankfurt, singapore, oregon)
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app # AJUSTE AQUI: O nome do seu arquivo principal e a variável da instância
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.0
+      - key: PORT
+        value: 10000
