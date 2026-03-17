@@ -1,28 +1,16 @@
 services:
-  - type: web
-    name: dfindexer
-    runtime: docker # O log mostra que você está usando Dockerfile
-    plan: free
-    region: ohio
-    envVars:
-      - key: REDIS_HOST
-        fromService:
-          type: redis
-          name: redis-db
-          property: host
-      - key: REDIS_PORT
-        fromService:
-          type: redis
-          name: redis-db
-          property: port
-      - key: FLARESOLVERR_ADDRESS
-        value: http://seu-flaresolverr-url:8191 # Substitua pela sua URL do FlareSolverr
-      - key: PORT
-        value: 10000
-
-# Adiciona um Redis automaticamente no deploy
-databases:
-  - name: redis-db
-    type: redis
-    plan: free # Note: O plano free de Redis no Render expira em 30 dias
-    ipAllowList: [] # Permite apenas serviços internos
+      - type: web
+          name: dfindexer
+              env: docker
+                  plan: free
+                      autoDeploy: false
+                          dockerfilePath: ./Dockerfile
+                              envVars:
+                                    - key: PUID
+                                            value: 1000
+                                                  - key: PGID
+                                                          value: 1000
+                                                                - key: TZ
+                                                                        value: America/Recife
+                                                                            ports:
+                                                                                  - port: 7006
