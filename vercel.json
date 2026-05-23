@@ -1,20 +1,15 @@
 {
-  "version": 2,
-  "builds": [{ "src": "wsgi.py", "use": "@vercel/python" }],
-  "routes": [{ "src": "/(.*)", "dest": "/wsgi.py" }],
-  "env": {
-    "LOG_FORMAT": "json",
-    "LOG_LEVEL": "2",
-    "RUN_ASYNC_TIMEOUT": "8",
-    "HTTP_REQUEST_TIMEOUT": "5",
-    "TRACKER_SCRAPING_ENABLED": "false",
-    "ALL_SCRAPERS_MAX_CONCURRENT": "1",
-    "HTTP_RETRY_MAX_ATTEMPTS": "1",
-    "TRACKER_MAX_WORKERS": "1",
-    "METADATA_MAX_CONCURRENT": "8",
-    "SCRAPER_MAX_WORKERS": "4",
-    "EMPTY_QUERY_MAX_LINKS": "4",
-    "HTTP_POOL_CONNECTIONS": "5",
-    "HTTP_POOL_MAXSIZE": "10"
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/app/index.py"
+    }
+  ],
+  "functions": {
+    "app/index.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{.github/**,Dockerfile,docker-compose.yml,prowlarr.yml,README.md}"
+    }
   }
 }
