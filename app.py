@@ -1,25 +1,20 @@
-"""Copyright (c) 2025 DFlexy"""
-"""https://github.com/DFlexy"""
+"""Vercel entrypoint for the Flask application.
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Ponto de entrada para a Vercel (e outros hosts WSGI como Gunicorn/uWSGI).
-# A Vercel importa este módulo e procura uma variável chamada `app`.
-# ─────────────────────────────────────────────────────────────────────────────
+Vercel may prefer a root app.py entrypoint for Flask projects. This file is
+also imported as the "app" module, so it exposes __path__ to keep imports like
+app.config and app.bootstrap resolving to the existing app/ package directory.
+"""
 
 import os
-import sys
 
-# Garante que o diretório raiz do projeto está no sys.path,
-# independente do diretório de trabalho da Vercel.
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
+__path__ = [os.path.join(ROOT_DIR, "app")]
 
-from app.config import Config
 from app.bootstrap import Bootstrap
-from utils.logging.logger import setup_logging
+from app.config import Config
+from utils.logging.logger import print_support_banner, setup_logging
 
 setup_logging(Config.LOG_LEVEL, Config.LOG_FORMAT)
+print_support_banner(Config.LOG_FORMAT)
 
-# `app` é a variável que a Vercel (e Gunicorn) procura automaticamente.
 app = Bootstrap.create_app()
