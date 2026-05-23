@@ -3,6 +3,7 @@
 
 import logging
 import time
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import datetime
 from flask import jsonify, request
 from app.config import Config
@@ -409,6 +410,16 @@ def indexer_handler(site_name: str = None):
             'results': [],
             'count': 0
         }), 500
+    except FuturesTimeoutError:
+        site_info = f"[{display_label}]" if 'display_label' in locals() else "[UNKNOWN]"
+        logger.warning(
+            f"{site_info} Search timeout after {Config.RUN_ASYNC_TIMEOUT}s - returning empty result set"
+        )
+        return jsonify({
+            'warning': 'Search timeout',
+            'results': [],
+            'count': 0
+        }), 200
     except Exception as e:
         # Erro genérico (manter como fallback, mas logar detalhadamente)
         site_info = f"[{display_label}]" if 'display_label' in locals() else "[UNKNOWN]"
@@ -420,3 +431,4 @@ def indexer_handler(site_name: str = None):
             'results': [],
             'count': 0
         }), 500
+
