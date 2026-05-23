@@ -60,19 +60,21 @@ class Config:
     FLARESOLVERR_MAX_SESSIONS: int = int(os.getenv('FLARESOLVERR_MAX_SESSIONS', '15'))
     SCRAPER_MAX_WORKERS: int = int(os.getenv('SCRAPER_MAX_WORKERS', '16'))
     
-    # Timeouts (valores fixos - não configuráveis via ENV)
-    HTTP_REQUEST_TIMEOUT: int = 20  # Timeout padrão em segundos para requisições HTTP de páginas
+    # Timeouts — configuráveis via ENV para ajuste em ambientes serverless.
+    # Na Vercel Hobby (10 s de budget total), use HTTP_REQUEST_TIMEOUT=5
+    # para garantir que a requisição ao site falhe rápido se estiver lento.
+    HTTP_REQUEST_TIMEOUT: int = int(os.getenv('HTTP_REQUEST_TIMEOUT', '20'))
     
-    # Connection Pool (valores fixos - não configuráveis via ENV)
-    HTTP_POOL_CONNECTIONS: int = 50  # Número de connection pools
-    HTTP_POOL_MAXSIZE: int = 100  # Tamanho máximo de cada pool
+    # Connection Pool
+    HTTP_POOL_CONNECTIONS: int = int(os.getenv('HTTP_POOL_CONNECTIONS', '50'))
+    HTTP_POOL_MAXSIZE: int = int(os.getenv('HTTP_POOL_MAXSIZE', '100'))
     
-    # Cache Local (valores fixos - não configuráveis via ENV)
-    LOCAL_CACHE_ENABLED: bool = True  # Habilita cache HTTP local em memória
-    LOCAL_CACHE_TTL: int = 30  # TTL do cache local em segundos (30s para evitar requisições duplicadas)
+    # Cache Local
+    LOCAL_CACHE_ENABLED: bool = os.getenv('LOCAL_CACHE_ENABLED', 'true').lower() == 'true'
+    LOCAL_CACHE_TTL: int = int(os.getenv('LOCAL_CACHE_TTL', '30'))
     
-    # Tracker Scraping (valor fixo - não configurável via ENV)
-    TRACKER_SCRAPING_ENABLED: bool = True  # Habilita scraping de trackers
+    # Tracker Scraping — desabilite em ambientes serverless para economizar tempo
+    TRACKER_SCRAPING_ENABLED: bool = os.getenv('TRACKER_SCRAPING_ENABLED', 'true').lower() == 'true'
     
     # Text Processing Constants
     MAX_QUERY_LENGTH: int = int(os.getenv('MAX_QUERY_LENGTH', '200'))  # Tamanho máximo de query de busca
