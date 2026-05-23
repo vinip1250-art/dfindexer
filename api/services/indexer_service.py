@@ -44,11 +44,19 @@ class IndexerService:
         scraper = create_scraper(scraper_type, use_flaresolverr=use_flaresolverr)
         
         try:
+            if max_results is None and Config.SEARCH_MAX_RESULTS > 0:
+                max_results = Config.SEARCH_MAX_RESULTS
+
             filter_func = None
             if query:
                 filter_func = QueryFilter.create_filter(query)
             
-            torrents = scraper.search(query, filter_func=filter_func)
+            torrents = scraper.search(
+                query,
+                filter_func=filter_func,
+                skip_metadata=not Config.METADATA_ENABLED,
+                skip_trackers=not Config.TRACKER_SCRAPING_ENABLED,
+            )
             
             filter_stats = None
             if hasattr(scraper, '_enricher') and scraper._enricher:

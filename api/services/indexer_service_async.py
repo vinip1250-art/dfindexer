@@ -58,6 +58,9 @@ class IndexerServiceAsync:
         scraper = create_scraper(scraper_type, use_flaresolverr=use_flaresolverr)
         
         try:
+            if max_results is None and Config.SEARCH_MAX_RESULTS > 0:
+                max_results = Config.SEARCH_MAX_RESULTS
+
             filter_func = None
             if query:
                 filter_func = QueryFilter.create_filter(query)
@@ -163,6 +166,9 @@ class IndexerServiceAsync:
         skip_metadata = False
         skip_trackers = False
         
+        if not Config.METADATA_ENABLED:
+            skip_metadata = True
+
         if is_test:
             skip_metadata = True
             skip_trackers = True
@@ -254,6 +260,7 @@ def run_async(coro):
             'Timeout ao aguardar operação async (RUN_ASYNC_TIMEOUT=%ss)',
             timeout,
         )
+        future.cancel()
         raise
 
 
