@@ -3,14 +3,18 @@
   "builds": [{ "src": "wsgi.py", "use": "@vercel/python" }],
   "routes": [{ "src": "/(.*)", "dest": "/wsgi.py" }],
   "env": {
-    "RUN_ASYNC_TIMEOUT": "9",
+    "LOG_FORMAT": "json",
+    "LOG_LEVEL": "2",
+    "RUN_ASYNC_TIMEOUT": "8",
+    "HTTP_REQUEST_TIMEOUT": "5",
+    "TRACKER_SCRAPING_ENABLED": "false",
     "ALL_SCRAPERS_MAX_CONCURRENT": "1",
     "HTTP_RETRY_MAX_ATTEMPTS": "1",
-    "TRACKER_MAX_WORKERS": "5",
-    "METADATA_MAX_CONCURRENT": "10",
+    "TRACKER_MAX_WORKERS": "0",
+    "METADATA_MAX_CONCURRENT": "8",
     "SCRAPER_MAX_WORKERS": "4",
     "EMPTY_QUERY_MAX_LINKS": "4",
-    "LOG_FORMAT": "json",
-    "LOG_LEVEL": "2"
+    "HTTP_POOL_CONNECTIONS": "5",
+    "HTTP_POOL_MAXSIZE": "10"
   }
 }
