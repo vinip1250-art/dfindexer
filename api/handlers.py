@@ -143,7 +143,7 @@ def indexer_handler(site_name: str = None):
                         ),
                         'results': [],
                         'count': 0
-                    }), 404
+                    }), 200
             display_label = types_info[normalized_type].get('display_name', site_name)
             log_prefix = f"[{display_label}]"
             # Mostra se o filtro será aplicado (sempre True quando há query, independente do parâmetro)
@@ -391,6 +391,9 @@ def indexer_handler(site_name: str = None):
     
     except ValueError as e:
         # Erro de validação (scraper inválido, query inválida, etc.)
+        # IMPORTANTE: retorna HTTP 200 para compatibilidade com Jackett/Prowlarr.
+        # Clientes Cardigann (especialmente o Jackett) lançam exception em qualquer
+        # status != 200, mesmo quando o JSON é válido. Retornamos 200 + results vazio.
         site_info = f"[{display_label}]" if 'display_label' in locals() else "[UNKNOWN]"
         error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
         logger.warning(f"{site_info} Validation error: {error_msg}")
@@ -398,9 +401,8 @@ def indexer_handler(site_name: str = None):
             'error': str(e),
             'results': [],
             'count': 0
-        }), 400
+        }), 200
     except KeyError as e:
-        # Erro de chave ausente (configuração, etc.)
         site_info = f"[{display_label}]" if 'display_label' in locals() else "[UNKNOWN]"
         error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
         logger.error(f"{site_info} Configuration error: {error_msg}", exc_info=True)
@@ -408,9 +410,8 @@ def indexer_handler(site_name: str = None):
             'error': 'Configuration error',
             'results': [],
             'count': 0
-        }), 500
+        }), 200
     except Exception as e:
-        # Erro genérico (manter como fallback, mas logar detalhadamente)
         site_info = f"[{display_label}]" if 'display_label' in locals() else "[UNKNOWN]"
         error_type = type(e).__name__
         error_msg = str(e).split('\n')[0][:100] if str(e) else str(e)
@@ -419,5 +420,5 @@ def indexer_handler(site_name: str = None):
             'error': 'Internal server error',
             'results': [],
             'count': 0
-        }), 500
+        }), 200
 
