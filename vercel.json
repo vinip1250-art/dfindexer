@@ -5,11 +5,5 @@
       "source": "/(.*)",
       "destination": "/app/index.py"
     }
-  ],
-  "functions": {
-    "app/index.py": {
-      "maxDuration": 60,
-      "excludeFiles": "{.github/**,Dockerfile,docker-compose.yml,prowlarr.yml,README.md}"
-    }
-  }
+  ]
 }
