@@ -1,10 +1,20 @@
+# Dependências do dfindexer — compatível com Vercel
+# Gerado para uso em deployment serverless
+
 Flask==3.1.3
 beautifulsoup4==4.14.3
 requests==2.32.5
 aiohttp==3.13.5
 aiohttp-socks==0.11.0
+
+# redis-py é compatível com Upstash Redis via REDIS_URL (rediss://)
 redis==7.4.0
+
 lxml==6.0.2
-waitress==3.0.2
 PySocks==1.7.1
 cryptography>=42.0.0
+
+# waitress NÃO é necessário na Vercel — o runtime @vercel/python
+# já serve o app WSGI internamente.
+# Para rodar localmente sem a Vercel, use:
+#   flask run  ou  gunicorn app:app
