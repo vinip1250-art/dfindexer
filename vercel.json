@@ -23,7 +23,7 @@
   "env": {
     "LOG_FORMAT": "json",
     "LOG_LEVEL": "1",
-    "RUN_ASYNC_TIMEOUT": "55",
+    "RUN_ASYNC_TIMEOUT": "9",
     "ALL_SCRAPERS_MAX_CONCURRENT": "2",
     "HTTP_RETRY_MAX_ATTEMPTS": "2",
     "EMPTY_QUERY_MAX_LINKS": "8"
