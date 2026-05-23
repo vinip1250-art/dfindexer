@@ -59,10 +59,21 @@ class Config:
     EMPTY_QUERY_MAX_LINKS: int = int(
         os.getenv('EMPTY_QUERY_MAX_LINKS', '8' if IS_VERCEL else '16')
     )
+    SEARCH_MAX_LINKS: int = int(
+        os.getenv('SEARCH_MAX_LINKS', '4' if IS_VERCEL else '0')
+    )
+    SEARCH_MAX_RESULTS: int = int(
+        os.getenv('SEARCH_MAX_RESULTS', '10' if IS_VERCEL else '0')
+    )
+    METADATA_ENABLED: bool = _parse_bool(
+        os.getenv('METADATA_ENABLED', 'false' if IS_VERCEL else 'true')
+    )
     
     # Concorrência (valores fixos - não configuráveis via ENV)
     TRACKER_MAX_WORKERS: int = 30  # Workers globais para trackers
-    METADATA_MAX_CONCURRENT: int = 128  # Limite global de requisições de metadata simultâneas
+    METADATA_MAX_CONCURRENT: int = int(
+        os.getenv('METADATA_MAX_CONCURRENT', '4' if IS_VERCEL else '128')
+    )  # Limite global de requisições de metadata simultâneas
     FLARESOLVERR_MAX_SESSIONS: int = 15  # Limite de sessões FlareSolverr simultâneas
     SCRAPER_MAX_WORKERS: int = 16  # Workers para processamento paralelo de links
     
@@ -102,8 +113,11 @@ class Config:
     
     # Async bridge (run_async / gather de scrapers)
     RUN_ASYNC_TIMEOUT: float = float(
-        os.getenv('RUN_ASYNC_TIMEOUT', '55' if IS_VERCEL else '600')
+        os.getenv('RUN_ASYNC_TIMEOUT', '50' if IS_VERCEL else '600')
     )  # segundos; alinhar ao pior caso de busca
-    ALL_SCRAPERS_MAX_CONCURRENT: int = max(1, int(os.getenv('ALL_SCRAPERS_MAX_CONCURRENT', '4')))
+    ALL_SCRAPERS_MAX_CONCURRENT: int = max(
+        1,
+        int(os.getenv('ALL_SCRAPERS_MAX_CONCURRENT', '2' if IS_VERCEL else '4'))
+    )
     INDEXED_COUNT_CACHE_TTL: float = float(os.getenv('INDEXED_COUNT_CACHE_TTL', '60'))  # cache do SCAN em GET /
     
