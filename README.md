@@ -53,6 +53,39 @@ O sistema adiciona automaticamente tags de idioma aos títulos quando detecta in
 - ✅ **฿£µÐ√** - Necessário selecionar o FlareSolverr
 
 
+## ▲ Vercel
+
+Este repositório também pode ser publicado na Vercel como uma aplicação Flask.
+Os arquivos `app.py`, `vercel.json` e `.python-version` deixam a Vercel
+encontrar a instância Flask automaticamente e direcionar todas as rotas para ela.
+O entrypoint principal fica em `app.py`, porque algumas builds da Vercel preferem
+esse nome para Flask. Ele mantém compatibilidade com a pasta `app/` existente.
+
+### Deploy pela interface da Vercel
+
+1. Envie este repositório para o seu GitHub.
+2. No painel da Vercel, clique em **Add New > Project** e importe o repositório.
+3. Em **Framework Preset**, deixe como **Other** caso a Vercel não detecte automaticamente.
+4. Não configure build command.
+5. Publique o projeto.
+
+### Deploy pela CLI
+
+```bash
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+npx vercel dev
+npx vercel deploy
+```
+
+### Observações para serverless
+
+- Redis continua opcional, mas em produção recomenda-se usar um Redis externo e configurar `REDIS_HOST`, `REDIS_PORT` e `REDIS_DB` nas variáveis de ambiente da Vercel.
+- FlareSolverr precisa estar em um serviço externo acessível publicamente e ser configurado em `FLARESOLVERR_ADDRESS`.
+- Quando `VERCEL=1`, o projeto usa padrões mais conservadores: `RUN_ASYNC_TIMEOUT=50`, `EMPTY_QUERY_MAX_LINKS=8`, `SEARCH_MAX_LINKS=4`, `SEARCH_MAX_RESULTS=10`, `ALL_SCRAPERS_MAX_CONCURRENT=2`, `METADATA_ENABLED=false`, `METADATA_MAX_CONCURRENT=4` e `TRACKER_SCRAPING_ENABLED=false`. Você pode sobrescrever esses valores nas variáveis de ambiente da Vercel.
+- A Vercel executa a aplicação como função serverless, não como container persistente. Buscas muito longas ou muitos scrapers em paralelo podem atingir o limite de duração da Function.
+
 ## 🐳 Docker
 
 ### Docker  - Opção 1: Docker Compose (Recomendado - Se encontra nos arquivos acima)
@@ -131,7 +164,14 @@ docker run -d \
 | `HTML_CACHE_TTL_SHORT`                  | TTL do cache curto de HTML (páginas)                                     | `10m`              |
 | `HTML_CACHE_TTL_LONG`                   | TTL do cache longo de HTML (páginas)                                     | `12h`              |
 | `FLARESOLVERR_SESSION_TTL`              | TTL das sessões FlareSolverr                                              | `4h`               |
-| `EMPTY_QUERY_MAX_LINKS`                 | Limite de links individuais a processar da página 1                      | `16`             |
+| `EMPTY_QUERY_MAX_LINKS`                 | Limite de links individuais a processar da página 1                      | `16` (`8` na Vercel) |
+| `SEARCH_MAX_LINKS`                      | Limite de páginas de resultado processadas por busca com query           | `0` sem limite (`4` na Vercel) |
+| `SEARCH_MAX_RESULTS`                    | Limite de resultados retornados por busca com query                      | `0` sem limite (`10` na Vercel) |
+| `ALL_SCRAPERS_MAX_CONCURRENT`           | Quantos scrapers rodam em paralelo na rota `/indexer`                    | `4` (`2` na Vercel) |
+| `METADATA_ENABLED`                      | Habilita enriquecimento remoto via metadata/iTorrents                    | `true` (`false` na Vercel) |
+| `METADATA_MAX_CONCURRENT`               | Limite de requisições simultâneas de metadata                            | `128` (`4` na Vercel) |
+| `TRACKER_SCRAPING_ENABLED`              | Habilita busca de seeds/leechers em trackers                             | `true` (`false` na Vercel) |
+| `RUN_ASYNC_TIMEOUT`                     | Timeout das operações async de busca                                     | `600` (`50` na Vercel) |
 | `FLARESOLVERR_ADDRESS`                  | Endereço do servidor FlareSolverr (ex: http://flaresolverr:8191)         | `None` (opcional)  |
 | `LOG_LEVEL`                             | `0` (debug), `1` (info), `2` (warn), `3` (error)                         | `1`                |
 | `LOG_FORMAT`                            | `console` ou `json`                                                      | `console`          |
