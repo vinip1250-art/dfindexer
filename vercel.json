@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "builds": [{ "src": "app.py", "use": "@vercel/python" }],
-  "routes": [{ "src": "/(.*)", "dest": "/app.py" }],
+  "builds": [{ "src": "wsgi.py", "use": "@vercel/python" }],
+  "routes": [{ "src": "/(.*)", "dest": "/wsgi.py" }],
   "env": {
     "RUN_ASYNC_TIMEOUT": "9",
     "ALL_SCRAPERS_MAX_CONCURRENT": "1",
