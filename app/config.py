@@ -5,6 +5,10 @@ import os
 from typing import Optional
 
 
+def _parse_bool(value: str) -> bool:
+    return value.strip().lower() in ('1', 'true', 'yes', 'on')
+
+
 # Converte duração (10m, 12h, 7d) para segundos
 def _parse_duration(duration_str: str) -> int:
     duration_str = duration_str.strip().lower()
@@ -23,6 +27,8 @@ def _parse_duration(duration_str: str) -> int:
 
 
 class Config:
+    IS_VERCEL: bool = _parse_bool(os.getenv('VERCEL', 'false'))
+
     # Servidor
     PORT: int = int(os.getenv('PORT', '7006'))
     METRICS_PORT: int = int(os.getenv('METRICS_PORT', '8081'))
@@ -50,31 +56,31 @@ class Config:
     # FlareSolverr
     FLARESOLVERR_ADDRESS: Optional[str] = os.getenv('FLARESOLVERR_ADDRESS', None)  # Padrão: None (desabilitado)
     
-    EMPTY_QUERY_MAX_LINKS: int = int(os.getenv('EMPTY_QUERY_MAX_LINKS', '16'))
+    EMPTY_QUERY_MAX_LINKS: int = int(
+        os.getenv('EMPTY_QUERY_MAX_LINKS', '8' if IS_VERCEL else '16')
+    )
     
-    # Concorrência
-    # Em ambientes serverless (Vercel) use valores menores via ENV para evitar esgotar
-    # o timeout da função (máx. 60 s no plano Pro).
-    TRACKER_MAX_WORKERS: int = int(os.getenv('TRACKER_MAX_WORKERS', '30'))
-    METADATA_MAX_CONCURRENT: int = int(os.getenv('METADATA_MAX_CONCURRENT', '128'))
-    FLARESOLVERR_MAX_SESSIONS: int = int(os.getenv('FLARESOLVERR_MAX_SESSIONS', '15'))
-    SCRAPER_MAX_WORKERS: int = int(os.getenv('SCRAPER_MAX_WORKERS', '16'))
+    # Concorrência (valores fixos - não configuráveis via ENV)
+    TRACKER_MAX_WORKERS: int = 30  # Workers globais para trackers
+    METADATA_MAX_CONCURRENT: int = 128  # Limite global de requisições de metadata simultâneas
+    FLARESOLVERR_MAX_SESSIONS: int = 15  # Limite de sessões FlareSolverr simultâneas
+    SCRAPER_MAX_WORKERS: int = 16  # Workers para processamento paralelo de links
     
-    # Timeouts — configuráveis via ENV para ajuste em ambientes serverless.
-    # Na Vercel Hobby (10 s de budget total), use HTTP_REQUEST_TIMEOUT=5
-    # para garantir que a requisição ao site falhe rápido se estiver lento.
-    HTTP_REQUEST_TIMEOUT: int = int(os.getenv('HTTP_REQUEST_TIMEOUT', '20'))
+    # Timeouts (valores fixos - não configuráveis via ENV)
+    HTTP_REQUEST_TIMEOUT: int = 20  # Timeout padrão em segundos para requisições HTTP de páginas
     
-    # Connection Pool
-    HTTP_POOL_CONNECTIONS: int = int(os.getenv('HTTP_POOL_CONNECTIONS', '50'))
-    HTTP_POOL_MAXSIZE: int = int(os.getenv('HTTP_POOL_MAXSIZE', '100'))
+    # Connection Pool (valores fixos - não configuráveis via ENV)
+    HTTP_POOL_CONNECTIONS: int = 50  # Número de connection pools
+    HTTP_POOL_MAXSIZE: int = 100  # Tamanho máximo de cada pool
     
-    # Cache Local
-    LOCAL_CACHE_ENABLED: bool = os.getenv('LOCAL_CACHE_ENABLED', 'true').lower() == 'true'
-    LOCAL_CACHE_TTL: int = int(os.getenv('LOCAL_CACHE_TTL', '30'))
+    # Cache Local (valores fixos - não configuráveis via ENV)
+    LOCAL_CACHE_ENABLED: bool = True  # Habilita cache HTTP local em memória
+    LOCAL_CACHE_TTL: int = 30  # TTL do cache local em segundos (30s para evitar requisições duplicadas)
     
-    # Tracker Scraping — desabilite em ambientes serverless para economizar tempo
-    TRACKER_SCRAPING_ENABLED: bool = os.getenv('TRACKER_SCRAPING_ENABLED', 'true').lower() == 'true'
+    # Tracker Scraping (valor fixo - não configurável via ENV)
+    TRACKER_SCRAPING_ENABLED: bool = _parse_bool(
+        os.getenv('TRACKER_SCRAPING_ENABLED', 'false' if IS_VERCEL else 'true')
+    )  # Habilita scraping de trackers
     
     # Text Processing Constants
     MAX_QUERY_LENGTH: int = int(os.getenv('MAX_QUERY_LENGTH', '200'))  # Tamanho máximo de query de busca
@@ -95,9 +101,9 @@ class Config:
     PROXY_PASS: Optional[str] = os.getenv('PROXY_PASS', None)
     
     # Async bridge (run_async / gather de scrapers)
-    # Na Vercel (Pro), o timeout máximo de uma função é 60 s.
-    # Reduza para 55 s via ENV para deixar margem de overhead.
-    RUN_ASYNC_TIMEOUT: float = float(os.getenv('RUN_ASYNC_TIMEOUT', '600'))  # segundos; na Vercel use 55
+    RUN_ASYNC_TIMEOUT: float = float(
+        os.getenv('RUN_ASYNC_TIMEOUT', '55' if IS_VERCEL else '600')
+    )  # segundos; alinhar ao pior caso de busca
     ALL_SCRAPERS_MAX_CONCURRENT: int = max(1, int(os.getenv('ALL_SCRAPERS_MAX_CONCURRENT', '4')))
     INDEXED_COUNT_CACHE_TTL: float = float(os.getenv('INDEXED_COUNT_CACHE_TTL', '60'))  # cache do SCAN em GET /
     
