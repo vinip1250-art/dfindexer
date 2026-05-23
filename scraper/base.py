@@ -785,6 +785,9 @@ class BaseScraper(ABC):
         links = self._search_variations(query)
         links_before = len(links)
         links = filter_urls_by_query_year(query, links)
+        max_search_links = getattr(Config, 'SEARCH_MAX_LINKS', 0) or 0
+        if max_search_links > 0:
+            links = links[:max_search_links]
 
         # Log das páginas encontradas
         scraper_name = getattr(self, 'DISPLAY_NAME', '') or getattr(self, 'SCRAPER_TYPE', 'UNKNOWN')
