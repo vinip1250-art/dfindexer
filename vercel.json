@@ -2,14 +2,30 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/index.py",
-      "use": "@vercel/python"
+      "src": "app.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb"
+      }
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "api/index.py"
+      "dest": "app.py"
     }
-  ]
+  ],
+  "functions": {
+    "app.py": {
+      "maxDuration": 60
+    }
+  },
+  "env": {
+    "LOG_FORMAT": "json",
+    "LOG_LEVEL": "1",
+    "RUN_ASYNC_TIMEOUT": "55",
+    "ALL_SCRAPERS_MAX_CONCURRENT": "2",
+    "HTTP_RETRY_MAX_ATTEMPTS": "2",
+    "EMPTY_QUERY_MAX_LINKS": "8"
+  }
 }
